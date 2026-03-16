@@ -18,9 +18,12 @@ def main():
     staffs, binary, line_mask = det.detect()
     overlay = det.draw_overlay(staffs)
     bpm, raw = extract_bpm(J)
+
     print("BPM:", bpm, "| OCR:", raw)
     cv.imshow(winname="filtered", mat=J)
     cv.imshow("staff overlay", overlay)
+    # removed = det.remove_staffs(staffs)
+    # cv.imshow("Removed staff lines", removed)
     cv.waitKey(0)
     cv.destroyAllWindows()
 

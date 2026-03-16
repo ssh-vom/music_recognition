@@ -1,23 +1,7 @@
-from dataclasses import dataclass
-
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
-
-
-@dataclass
-class StaffLine:
-    y: int
-    x_start: int
-    x_end: int
-
-
-@dataclass
-class Staff:
-    lines: list[StaffLine]
-    spacing: float
-    top: int
-    bottom: int
+from schema import Staff, StaffLine
 
 
 class StaffDetector:
@@ -83,10 +67,6 @@ class StaffDetector:
         candidate_rows = np.flatnonzero(row_strength >= threshold)
         return self._cluster_adjacent_rows(candidate_rows)
 
-    # ------------------------------------------------------------------
-    # Line extent: find x-range of a detected staff line
-    # ------------------------------------------------------------------
-
     def _line_extent(self, line_mask: MatLike, y: int) -> tuple[int, int]:
         """Return (x_start, x_end) for the line at row y."""
         top = max(0, y - 1)
@@ -97,10 +77,6 @@ class StaffDetector:
             return 0, line_mask.shape[1] - 1
 
         return int(cols[0]), int(cols[-1])
-
-    # ------------------------------------------------------------------
-    # Staff grouping: cluster line centers into groups of 5
-    # ------------------------------------------------------------------
 
     def _group_staffs(
         self,
@@ -140,10 +116,6 @@ class StaffDetector:
             i += 5
 
         return staffs
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def detect(self) -> tuple[list[Staff], MatLike, MatLike]:
         """Run the full detection pipeline.
@@ -197,3 +169,25 @@ class StaffDetector:
             )
 
         return overlay
+
+    def remove_staffs(self, staffs: list[Staff]) -> MatLike:
+        gray = self.to_gray()
+        binary = self.binarize(gray)
+        horizontal = self.extract_horizontal_lines(binary)
+
+        allowed = np.zeros_like(horizontal)
+
+        for staff in staffs:
+            band_half = max(1, int(round(staff.spacing * 0.2)))
+
+            for line in staff.lines:
+                y0 = max(0, line.y - band_half)
+                y1 = min(horizontal.shape[0], line.y + band_half + 1)
+                x0 = max(0, line.x_start)
+                x1 = min(horizontal.shape[1], line.x_end + 1)
+
+                allowed[y0:y1, x0:x1] = 255
+
+        staff_line_mask = cv.bitwise_and(horizontal, allowed)
+        cleaned = cv.subtract(binary, staff_line_mask)
+        return cleaned
