@@ -2,6 +2,7 @@ import cv2 as cv
 import re
 from cv2.typing import MatLike
 import pytesseract
+from staff_detection import StaffDetector
 
 
 def main():
@@ -13,9 +14,13 @@ def main():
         )
 
     J = preprocess(I)
+    det = StaffDetector(I)
+    staffs, binary, line_mask = det.detect()
+    overlay = det.draw_overlay(staffs)
     bpm, raw = extract_bpm(J)
     print("BPM:", bpm, "| OCR:", raw)
     cv.imshow(winname="filtered", mat=J)
+    cv.imshow("staff overlay", overlay)
     cv.waitKey(0)
     cv.destroyAllWindows()
 
