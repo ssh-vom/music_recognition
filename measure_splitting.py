@@ -1,13 +1,28 @@
+from dataclasses import dataclass
 from cv2.typing import MatLike
 
 from schema import BarLine, Measure, Staff
 
 
+@dataclass
+class MeasureDetectionConfig:
+    left_header_spacings: float = 7.0
+    bar_trim_ratio: float = 0.25
+    min_width_px: float = 4
+
+
 class MeasureSplitter:
-    def __init__(self, bars: list[BarLine], staffs: list[Staff], sheet_img: MatLike):
+    def __init__(
+        self,
+        bars: list[BarLine],
+        staffs: list[Staff],
+        sheet_img: MatLike,
+        config: MeasureDetectionConfig | None = None,
+    ):
         self.bars = bars
         self.staffs = staffs
         self.image = sheet_img
+        self.config = config or MeasureDetectionConfig()
 
     def _group_barlines_by_staff(self) -> dict[int, list[BarLine]]:
         grouped: dict[int, list[BarLine]] = {i: [] for i in range(len(self.staffs))}
@@ -21,32 +36,132 @@ class MeasureSplitter:
 
         return grouped
 
+    def _staff_left(self, staff: Staff) -> int:
+        return min(line.x_start for line in staff.lines)
+
+    def _staff_right(self, staff: Staff) -> int:
+        return max(line.x_end for line in staff.lines) + 1
+
+    def _content_start_x(self, staff: Staff) -> int:
+        staff_left = self._staff_left(staff)
+        staff_right = self._staff_right(staff)
+        header_width = int(round(self.config.left_header_spacings * staff.spacing))
+        content_start = staff_left + header_width
+
+        if content_start < staff_left:
+            return staff_left
+
+        if content_start > staff_right:
+            return staff_right
+
+        return content_start
+
+    def _bar_trim_px(self, staff: Staff) -> int:
+        trim = int(round(self.config.bar_trim_ratio * staff.spacing))
+
+        if trim < 1:
+            return 1
+
+        return trim
+
+    def _usable_bars(
+        self,
+        staff_bars: list[BarLine],
+        content_start_x: int,
+        staff_right: int,
+    ) -> list[BarLine]:
+        usable_bars: list[BarLine] = []
+
+        for bar in staff_bars:
+            if bar.x <= content_start_x:
+                continue
+
+            if bar.x >= staff_right:
+                continue
+
+            usable_bars.append(bar)
+
+        return usable_bars
+
+    def _build_measure(
+        self,
+        x_start: int,
+        x_end: int,
+        staff: Staff,
+        staff_index: int,
+    ) -> Measure | None:
+        if x_end - x_start < self.config.min_width_px:
+            return None
+
+        return Measure(
+            x_start=x_start,
+            x_end=x_end,
+            y_top=staff.top,
+            y_bottom=staff.bottom,
+            staff_index=staff_index,
+        )
+
+    def _split_staff(
+        self,
+        staff: Staff,
+        staff_index: int,
+        staff_bars: list[BarLine],
+    ) -> list[Measure]:
+        if not staff.lines:
+            return []
+
+        staff_right = self._staff_right(staff)
+        content_start_x = self._content_start_x(staff)
+
+        if content_start_x >= staff_right:
+            return []
+
+        usable_bars = self._usable_bars(staff_bars, content_start_x, staff_right)
+
+        if not usable_bars:
+            measure = self._build_measure(
+                content_start_x, staff_right, staff, staff_index
+            )
+            if measure is None:
+                return []
+            return [measure]
+
+        measures: list[Measure] = []
+        trim = self._bar_trim_px(staff)
+        current_start = content_start_x
+
+        for bar in usable_bars:
+            current_end = bar.x - trim
+            measure = self._build_measure(
+                current_start, current_end, staff, staff_index
+            )
+
+            if measure is not None:
+                measures.append(measure)
+
+            next_start = bar.x + trim
+            if next_start > current_start:
+                current_start = next_start
+
+        final_measure = self._build_measure(
+            current_start, staff_right, staff, staff_index
+        )
+        if final_measure is not None:
+            measures.append(final_measure)
+
+        return measures
+
     def split_measures(self) -> dict[int, list[Measure]]:
         barlines_by_staff = self._group_barlines_by_staff()
         measures_map: dict[int, list[Measure]] = {}
 
         for staff_index, staff in enumerate(self.staffs):
             staff_bars = barlines_by_staff[staff_index]
-            staff_left = min(line.x_start for line in staff.lines)
-
-            boundaries = [staff_left] + [bar.x for bar in staff_bars]
-            measures: list[Measure] = []
-
-            for x_start, x_end in zip(boundaries, boundaries[1:]):
-                if x_end <= x_start:
-                    continue
-
-                measures.append(
-                    Measure(
-                        x_start=x_start,
-                        x_end=x_end,
-                        y_top=staff.top,
-                        y_bottom=staff.bottom,
-                        staff_index=staff_index,
-                    )
-                )
-
-            measures_map[staff_index] = measures
+            measures_map[staff_index] = self._split_staff(
+                staff=staff,
+                staff_index=staff_index,
+                staff_bars=staff_bars,
+            )
 
         return measures_map
 
@@ -55,12 +170,15 @@ class MeasureSplitter:
         crops: dict[int, list[MatLike]] = {}
 
         for staff_index, measures in measures_map.items():
-            crops[staff_index] = [
-                self.image[
+            staff_crops: list[MatLike] = []
+
+            for measure in measures:
+                crop = self.image[
                     measure.y_top : measure.y_bottom + 1,
                     measure.x_start : measure.x_end,
                 ]
-                for measure in measures
-            ]
+                staff_crops.append(crop)
+
+            crops[staff_index] = staff_crops
 
         return crops
