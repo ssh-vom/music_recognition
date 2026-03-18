@@ -1,8 +1,10 @@
-import cv2 as cv
+import os
 import re
+import cv2 as cv
 from cv2.typing import MatLike
 import pytesseract
-
+from music21 import converter
+from tunes_processing import preprocess_tunes
 
 def main():
 
@@ -15,10 +17,11 @@ def main():
     J = preprocess(I)
     bpm, raw = extract_bpm(J)
     print("BPM:", bpm, "| OCR:", raw)
+    play_music()
     cv.imshow(winname="filtered", mat=J)
+
     cv.waitKey(0)
     cv.destroyAllWindows()
-
     return
 
 
@@ -50,6 +53,28 @@ def extract_bpm(I: MatLike) -> tuple[int | None, str | None]:
     if not (20 <= bpm <= 320):
         return None, txt
     return bpm, txt
+
+
+def play_music():
+    """Reads a local text file containing ABC notation for a C major scale, parses it using music21, and plays the resulting MIDI output.
+    Assumes all abc notation is formatted correctly"""
+    # Define the URL and the local path for saving the file
+    local_file_path = 'data/c_major_scale.txt'
+
+    # Ensure the 'data' directory exists
+    os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+    
+    # Read and print the content from the local file
+    with open(local_file_path, 'r') as file:
+        tunes = file.read()
+    
+    tune_list = []
+    tune_list = tunes.split('\n\n\n')
+
+    for i in range(len(tune_list)):
+        # tune_list[i] = preprocess_tunes(tune_list[i])
+        score = converter.parse(tune_list[i])
+        score.show('midi')
 
 
 if __name__ == "__main__":
