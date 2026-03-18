@@ -2,6 +2,15 @@ from dataclasses import dataclass
 
 
 @dataclass
+class Measure:
+    x_start: int
+    x_end: int
+    y_top: int
+    y_bottom: int
+    staff_index: int
+
+
+@dataclass
 class BarLine:
     x: int
     y_top: int

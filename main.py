@@ -5,6 +5,8 @@ import pytesseract
 from staff_detection import StaffDetector
 from bar_detection import BarDetector
 
+# Optical Music Recognition pipeline for sheet music to ABC conversion
+
 
 def main():
 
@@ -16,9 +18,10 @@ def main():
 
     J = preprocess(I)
     det = StaffDetector(I)
-    staffs, binary, line_mask = det.detect()
+    staffs, _, _ = det.detect()
     overlay = det.draw_overlay(staffs)
-    bar_det = BarDetector(binary, I, staffs)
+    removed = det.remove_staffs(staffs)
+    bar_det = BarDetector(removed, I, staffs)
     bars = bar_det.detect()
     overlay_bar = bar_det.draw_overlay()
     print(f"Number of bars detected {len(bars)}")
@@ -30,7 +33,7 @@ def main():
     print("BPM:", bpm, "| OCR:", raw)
     cv.imshow(winname="filtered", mat=J)
     cv.imshow("staff overlay", overlay)
-    removed = det.remove_staffs(staffs)
+    cv.imshow("Removed staff lines", removed)
     cv.imshow("Overlay bar", overlay_bar)
     cv.imwrite("removed.jpg", removed)
     cv.waitKey(0)
