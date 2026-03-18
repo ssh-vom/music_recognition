@@ -3,6 +3,7 @@ import re
 from cv2.typing import MatLike
 import pytesseract
 from staff_detection import StaffDetector
+from bar_detection import BarDetector
 
 
 def main():
@@ -17,13 +18,21 @@ def main():
     det = StaffDetector(I)
     staffs, binary, line_mask = det.detect()
     overlay = det.draw_overlay(staffs)
+    bar_det = BarDetector(binary, I, staffs)
+    bars = bar_det.detect()
+    overlay_bar = bar_det.draw_overlay()
+    print(f"Number of bars detected {len(bars)}")
+    for bar in bars:
+        print(f"staff = {bar.staff_index} x = {bar.x}")
+        print(f"y= {bar.y_top},{bar.y_bottom}")
     bpm, raw = extract_bpm(J)
 
     print("BPM:", bpm, "| OCR:", raw)
     cv.imshow(winname="filtered", mat=J)
     cv.imshow("staff overlay", overlay)
-    # removed = det.remove_staffs(staffs)
-    # cv.imshow("Removed staff lines", removed)
+    removed = det.remove_staffs(staffs)
+    cv.imshow("Overlay bar", overlay_bar)
+    cv.imwrite("removed.jpg", removed)
     cv.waitKey(0)
     cv.destroyAllWindows()
 

@@ -319,27 +319,27 @@ class StaffDetector:
 
         return overlay
 
-    # def remove_staffs(self, staffs: list[Staff]) -> MatLike:
-    #     gray = self.to_gray()
-    #     binary = self.binarize(gray)
-    #     horizontal = self.extract_horizontal_lines(binary)
-    #
-    #     allowed = np.zeros_like(horizontal)
-    #
-    #     for staff in staffs:
-    #         band_half = max(
-    #             1,
-    #             int(round(staff.spacing * self.config.removal_band_half_height_ratio)),
-    #         )
-    #
-    #         for line in staff.lines:
-    #             y0 = max(0, line.y - band_half)
-    #             y1 = min(horizontal.shape[0], line.y + band_half + 1)
-    #             x0 = max(0, line.x_start)
-    #             x1 = min(horizontal.shape[1], line.x_end + 1)
-    #
-    #             allowed[y0:y1, x0:x1] = MASK_ON
-    #
-    #     staff_line_mask = cv.bitwise_and(horizontal, allowed)
-    #     cleaned = cv.subtract(binary, staff_line_mask)
-    #     return cleaned
+    def remove_staffs(self, staffs: list[Staff]) -> MatLike:
+        gray = self.to_gray()
+        binary = self.binarize(gray)
+        horizontal = self.extract_horizontal_lines(binary)
+
+        allowed = np.zeros_like(horizontal)
+
+        for staff in staffs:
+            band_half = max(
+                1,
+                int(round(staff.spacing * self.config.removal_band_half_height_ratio)),
+            )
+
+            for line in staff.lines:
+                y0 = max(0, line.y - band_half)
+                y1 = min(horizontal.shape[0], line.y + band_half + 1)
+                x0 = max(0, line.x_start)
+                x1 = min(horizontal.shape[1], line.x_end + 1)
+
+                allowed[y0:y1, x0:x1] = MASK_ON
+
+        staff_line_mask = cv.bitwise_and(horizontal, allowed)
+        cleaned = cv.subtract(binary, staff_line_mask)
+        return cleaned
