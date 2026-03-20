@@ -3,6 +3,7 @@ from typing import Literal
 
 
 BarKind = Literal["single", "double_left", "double_right"]
+RepeatKind = Literal["none", "begin", "end"]
 
 
 @dataclass
@@ -20,6 +21,7 @@ class BarLine:
     y_top: int
     y_bottom: int
     kind: BarKind
+    repeat: RepeatKind
     staff_index: int  # which staff the barline belongs to
 
 

@@ -28,7 +28,9 @@ def main():
     overlay_bar = bar_det.draw_overlay()
     print(f"Number of bars detected {len(bars)}")
     for bar in bars:
-        print(f"staff = {bar.staff_index} x = {bar.x} kind = {bar.kind}")
+        print(
+            f"staff = {bar.staff_index} x = {bar.x} kind = {bar.kind} repeat = {bar.repeat}"
+        )
         print(f"y= {bar.y_top},{bar.y_bottom}")
     bpm, raw = extract_bpm(J)
     ms = MeasureSplitter(bars, staffs, I)
