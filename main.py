@@ -6,6 +6,7 @@ import pytesseract
 from staff_detection import StaffDetector
 from bar_detection import BarDetector
 from measure_splitting import MeasureSplitter
+from note_detection import NoteDetector
 
 # Optical Music Recognition pipeline for sheet music to ABC conversion
 
@@ -34,17 +35,51 @@ def main():
         print(f"y= {bar.y_top},{bar.y_bottom}")
     bpm, raw = extract_bpm(J)
     ms = MeasureSplitter(bars, staffs, I)
+    measures = ms.split_measures()
     cropped = ms.crop_measures()
     clef_key_crops = ms.crop_clef_and_key_signatures()
-    show_measure_grid(cropped)
+    note_detector = NoteDetector()
+    note_overlays_by_staff: dict[int, list[MatLike]] = {}
+
+    for staff_index, staff_crops in cropped.items():
+        staff_measures = measures[staff_index]
+        assert len(staff_measures) == len(staff_crops)
+        staff_note_overlays: list[MatLike] = []
+
+        for measure_index, cleaned_measure_mask in enumerate(staff_crops):
+            detected_notes = note_detector.detect(
+                cleaned_measure_mask=cleaned_measure_mask,
+                staff=staffs[staff_index],
+                measure=staff_measures[measure_index],
+                measure_index=measure_index,
+            )
+            print(
+                f"staff={staff_index} measure={measure_index} detected_notes={len(detected_notes)}"
+            )
+
+            for note in detected_notes:
+                print(
+                    f"  note kind={note.kind} x={note.center_x} y={note.center_y} step={note.step}"
+                )
+
+            note_overlay = note_detector.draw_overlay(
+                cleaned_measure_mask=cleaned_measure_mask,
+                detected_notes=detected_notes,
+            )
+            staff_note_overlays.append(note_overlay)
+
+        note_overlays_by_staff[staff_index] = staff_note_overlays
+
+    show_measure_grid(cropped, "measures_grid")
+    show_measure_grid(note_overlays_by_staff, "notes_grid")
     show_clef_key_grid(clef_key_crops)
 
     print("BPM:", bpm, "| OCR:", raw)
-    cv.imshow(winname="filtered", mat=J)
-    cv.imwrite("staff_overlay.jpg", overlay)
-    cv.imshow("Removed staff lines", removed)
-    cv.imshow("Overlay bar", overlay_bar)
-    cv.imwrite("removed.jpg", removed)
+    # cv.imshow(winname="filtered", mat=J)
+    # cv.imwrite("staff_overlay.jpg", overlay)
+    # cv.imshow("Removed staff lines", removed)
+    # cv.imshow("Overlay bar", overlay_bar)
+    # cv.imwrite("removed.jpg", removed)
     cv.waitKey(0)
     cv.destroyAllWindows()
 
@@ -64,17 +99,16 @@ def preprocess(I: MatLike):
     return J
 
 
-def show_measure_grid(cropped: dict[int, list[MatLike]]) -> None:
+def show_measure_grid(cropped: dict[int, list[MatLike]], window_name: str) -> None:
     tiles: list[MatLike] = []
 
     for staff_index, staff_crops in cropped.items():
         for measure_index, crop in enumerate(staff_crops):
             if len(crop.shape) == 2:
                 tile = cv.cvtColor(crop, cv.COLOR_GRAY2BGR)
+                tile = cv.bitwise_not(tile)
             else:
                 tile = crop.copy()
-
-            tile = cv.bitwise_not(tile)
 
             cv.putText(
                 tile,
@@ -115,7 +149,7 @@ def show_measure_grid(cropped: dict[int, list[MatLike]]) -> None:
         grid_rows.append(cv.hconcat(padded_tiles[start:end]))
 
     grid = cv.vconcat(grid_rows)
-    cv.imshow("measures_grid", grid)
+    cv.imshow(window_name, grid)
 
 
 def show_clef_key_grid(cropped: dict[int, MatLike]) -> None:
@@ -166,7 +200,7 @@ def show_clef_key_grid(cropped: dict[int, MatLike]) -> None:
         grid_rows.append(cv.hconcat(padded_tiles[start:end]))
 
     grid = cv.vconcat(grid_rows)
-    cv.imshow("clef_key_grid", grid)
+    # cv.imshow("clef_key_grid", grid)
 
 
 def extract_bpm(I: MatLike) -> tuple[int | None, str | None]:

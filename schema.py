@@ -4,7 +4,7 @@ from typing import Literal
 
 BarKind = Literal["single", "double_left", "double_right"]
 RepeatKind = Literal["none", "begin", "end"]
-SymbolKind = Literal["notehead", "rest", "barline", "clef", "key_signature"]
+NoteKind = Literal["notehead"]
 
 
 @dataclass
@@ -52,9 +52,9 @@ class ClefAndKeySignature:
 
 @dataclass
 class Note:
-    kind: SymbolKind
+    kind: NoteKind
     staff_index: int
     measure_index: int
-    center_x: int
-    center_y: int
+    center_x: int  # measure local center
+    center_y: int  # measure local center
     step: int
