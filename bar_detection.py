@@ -4,7 +4,7 @@ import cv2 as cv
 from cv2.typing import MatLike
 
 from constants import MASK_OFF, MASK_ON
-from schema import BarLine, Staff
+from schema import BarKind, BarLine, Staff
 
 # Configuration and detection logic for vertical barline detection
 
@@ -32,6 +32,16 @@ class BarDetectionConfig:
     thick_bar_min_density: float = 0.75
     # Maximum distance between bar centers to merge into single bar (in spacings)
     merge_distance_ratio: float = 0.5
+    # Wide contour threshold used to split final double bars into left/right bars
+    double_bar_min_width_spacings: float = 1.0
+    # How close to the right edge a wide contour must be to be treated as final double bar
+    double_bar_right_margin_spacings: float = 2.0
+
+
+@dataclass(frozen=True)
+class BarCandidate:
+    x: int
+    kind: BarKind
 
 
 class BarDetector:
@@ -116,7 +126,8 @@ class BarDetector:
             )
 
             # Collect x positions of valid barline candidates
-            candidates: list[int] = []
+            candidates: list[BarCandidate] = []
+            staff_right = max(line.x_end for line in staff.lines)
             for contour in contours:
                 # Get bounding box of component
                 x, _, width, height = cv.boundingRect(contour)
@@ -139,36 +150,66 @@ class BarDetector:
                 if width > max_width and density < self.config.thick_bar_min_density:
                     continue
 
+                abs_left = left_skip + x
+                abs_right = left_skip + x + width - 1
+                abs_center = left_skip + x + width // 2
+
+                min_double_width = max(
+                    6,
+                    int(
+                        round(self.config.double_bar_min_width_spacings * staff.spacing)
+                    ),
+                )
+                right_margin = int(
+                    round(self.config.double_bar_right_margin_spacings * staff.spacing)
+                )
+                near_right_edge = abs_center >= staff_right - right_margin
+
+                if width >= min_double_width and near_right_edge:
+                    candidates.append(BarCandidate(x=abs_left, kind="double_left"))
+                    candidates.append(BarCandidate(x=abs_right, kind="double_right"))
+                    continue
+
                 # Convert to absolute x coordinate and store
-                candidates.append(left_skip + x + width // 2)
+                candidates.append(BarCandidate(x=abs_center, kind="single"))
 
             # Skip staff if no valid barlines found
             if not candidates:
                 continue
 
             # Sort and merge nearby detections to handle slight variations
-            candidates.sort()
+            candidates.sort(key=lambda candidate: candidate.x)
             merge_distance = max(
                 3,  # minimum merge distance in pixels
                 int(round(self.config.merge_distance_ratio * staff.spacing)),
             )
 
-            merged_candidates: list[int] = [candidates[0]]
-            for x in candidates[1:]:
+            merged_candidates: list[BarCandidate] = [candidates[0]]
+            for candidate in candidates[1:]:
                 # If current detection is far from last merged one, start new group
-                if x - merged_candidates[-1] > merge_distance:
-                    merged_candidates.append(x)
-                else:
-                    # Otherwise, update position to average of merged detections
-                    merged_candidates[-1] = (merged_candidates[-1] + x) // 2
+                if candidate.x - merged_candidates[-1].x > merge_distance:
+                    merged_candidates.append(candidate)
+                    continue
+
+                # Never merge explicit double bars with anything.
+                if candidate.kind != "single" or merged_candidates[-1].kind != "single":
+                    merged_candidates.append(candidate)
+                    continue
+
+                # Otherwise, update position to average of merged detections
+                merged_candidates[-1] = BarCandidate(
+                    x=(merged_candidates[-1].x + candidate.x) // 2,
+                    kind="single",
+                )
 
             # Create BarLine objects for each merged detection
-            for x in merged_candidates:
+            for candidate in merged_candidates:
                 bars.append(
                     BarLine(
-                        x=x,
+                        x=candidate.x,
                         y_top=y0,
                         y_bottom=y1 - 1,
+                        kind=candidate.kind,
                         staff_index=staff_index,
                     )
                 )

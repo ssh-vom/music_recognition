@@ -1,4 +1,8 @@
 from dataclasses import dataclass
+from typing import Literal
+
+
+BarKind = Literal["single", "double_left", "double_right"]
 
 
 @dataclass
@@ -15,6 +19,7 @@ class BarLine:
     x: int
     y_top: int
     y_bottom: int
+    kind: BarKind
     staff_index: int  # which staff the barline belongs to
 
 

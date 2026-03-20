@@ -172,7 +172,21 @@ class MeasureSplitter:
         trim = self._bar_trim_px(staff)
         current_start = content_start_x
 
-        for bar in usable_bars:
+        for index, bar in enumerate(usable_bars):
+            match bar.kind:
+                case "single":
+                    pass
+                case "double_left":
+                    if (
+                        index + 1 < len(usable_bars)
+                        and usable_bars[index + 1].kind == "double_right"
+                    ):
+                        continue
+                case "double_right":
+                    pass
+                case _:
+                    assert False, f"Unknown bar kind: {bar.kind}"
+
             current_end = bar.x - trim
             measure = self._build_measure(
                 current_start, current_end, staff, staff_index
