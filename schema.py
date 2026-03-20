@@ -1,4 +1,9 @@
 from dataclasses import dataclass
+from typing import Literal
+
+
+BarKind = Literal["single", "double_left", "double_right"]
+RepeatKind = Literal["none", "begin", "end"]
 
 
 @dataclass
@@ -15,6 +20,8 @@ class BarLine:
     x: int
     y_top: int
     y_bottom: int
+    kind: BarKind
+    repeat: RepeatKind
     staff_index: int  # which staff the barline belongs to
 
 
@@ -31,3 +38,12 @@ class Staff:
     spacing: float
     top: int
     bottom: int
+
+
+@dataclass
+class ClefAndKeySignature:
+    x_start: int
+    x_end: int
+    y_top: int
+    y_bottom: int
+    staff_index: int

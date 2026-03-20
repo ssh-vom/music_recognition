@@ -1,9 +1,11 @@
 import cv2 as cv
+import numpy as np
 import re
 from cv2.typing import MatLike
 import pytesseract
 from staff_detection import StaffDetector
 from bar_detection import BarDetector
+from measure_splitting import MeasureSplitter
 
 # Optical Music Recognition pipeline for sheet music to ABC conversion
 
@@ -26,13 +28,20 @@ def main():
     overlay_bar = bar_det.draw_overlay()
     print(f"Number of bars detected {len(bars)}")
     for bar in bars:
-        print(f"staff = {bar.staff_index} x = {bar.x}")
+        print(
+            f"staff = {bar.staff_index} x = {bar.x} kind = {bar.kind} repeat = {bar.repeat}"
+        )
         print(f"y= {bar.y_top},{bar.y_bottom}")
     bpm, raw = extract_bpm(J)
+    ms = MeasureSplitter(bars, staffs, I)
+    cropped = ms.crop_measures()
+    clef_key_crops = ms.crop_clef_and_key_signatures()
+    show_measure_grid(cropped)
+    show_clef_key_grid(clef_key_crops)
 
     print("BPM:", bpm, "| OCR:", raw)
     cv.imshow(winname="filtered", mat=J)
-    cv.imshow("staff overlay", overlay)
+    cv.imwrite("staff_overlay.jpg", overlay)
     cv.imshow("Removed staff lines", removed)
     cv.imshow("Overlay bar", overlay_bar)
     cv.imwrite("removed.jpg", removed)
@@ -53,6 +62,111 @@ def preprocess(I: MatLike):
     # filter, J = cv.threshold(src=I, thresh=0.0, maxval=255.0, type=0)
 
     return J
+
+
+def show_measure_grid(cropped: dict[int, list[MatLike]]) -> None:
+    tiles: list[MatLike] = []
+
+    for staff_index, staff_crops in cropped.items():
+        for measure_index, crop in enumerate(staff_crops):
+            if len(crop.shape) == 2:
+                tile = cv.cvtColor(crop, cv.COLOR_GRAY2BGR)
+            else:
+                tile = crop.copy()
+
+            tile = cv.bitwise_not(tile)
+
+            cv.putText(
+                tile,
+                f"s{staff_index} m{measure_index}",
+                (6, 18),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                1,
+                cv.LINE_AA,
+            )
+            tiles.append(tile)
+
+    if not tiles:
+        return
+
+    cols = 4
+    rows = (len(tiles) + cols - 1) // cols
+    cell_h = max(tile.shape[0] for tile in tiles)
+    cell_w = max(tile.shape[1] for tile in tiles)
+
+    blank = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+    padded_tiles: list[MatLike] = []
+
+    for tile in tiles:
+        padded = blank.copy()
+        h, w = tile.shape[:2]
+        padded[:h, :w] = tile
+        padded_tiles.append(padded)
+
+    while len(padded_tiles) < rows * cols:
+        padded_tiles.append(blank.copy())
+
+    grid_rows: list[MatLike] = []
+    for row_index in range(rows):
+        start = row_index * cols
+        end = start + cols
+        grid_rows.append(cv.hconcat(padded_tiles[start:end]))
+
+    grid = cv.vconcat(grid_rows)
+    cv.imshow("measures_grid", grid)
+
+
+def show_clef_key_grid(cropped: dict[int, MatLike]) -> None:
+    tiles: list[MatLike] = []
+
+    for staff_index, crop in cropped.items():
+        if len(crop.shape) == 2:
+            tile = cv.cvtColor(crop, cv.COLOR_GRAY2BGR)
+        else:
+            tile = crop.copy()
+
+        cv.putText(
+            tile,
+            f"s{staff_index} clef+key",
+            (6, 18),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv.LINE_AA,
+        )
+        tiles.append(tile)
+
+    if not tiles:
+        return
+
+    cols = 3
+    rows = (len(tiles) + cols - 1) // cols
+    cell_h = max(tile.shape[0] for tile in tiles)
+    cell_w = max(tile.shape[1] for tile in tiles)
+
+    blank = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+    padded_tiles: list[MatLike] = []
+
+    for tile in tiles:
+        padded = blank.copy()
+        h, w = tile.shape[:2]
+        padded[:h, :w] = tile
+        padded_tiles.append(padded)
+
+    while len(padded_tiles) < rows * cols:
+        padded_tiles.append(blank.copy())
+
+    grid_rows: list[MatLike] = []
+    for row_index in range(rows):
+        start = row_index * cols
+        end = start + cols
+        grid_rows.append(cv.hconcat(padded_tiles[start:end]))
+
+    grid = cv.vconcat(grid_rows)
+    cv.imshow("clef_key_grid", grid)
 
 
 def extract_bpm(I: MatLike) -> tuple[int | None, str | None]:
