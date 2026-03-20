@@ -3,7 +3,7 @@ import cv2 as cv
 from cv2.typing import MatLike
 
 from constants import MASK_ON
-from schema import BarLine, Measure, Staff
+from schema import BarLine, Measure, Staff, ClefAndKeySignature
 
 
 @dataclass
@@ -241,4 +241,39 @@ class MeasureSplitter:
 
             crops[staff_index] = staff_crops
 
+        return crops
+
+    # Grab each clef and key signature from the sheet. Mapping it to a staff index
+    def extract_clef_and_key_signatures(self) -> dict[int, ClefAndKeySignature]:
+
+        clef_key_map: dict[int, ClefAndKeySignature] = {}
+
+        for staff_index, staff in enumerate(self.staffs):
+            assert staff.lines
+            x_start = self._staff_left(staff)
+            x_end = self._content_start_x(staff)
+            assert x_end > x_start
+
+            clef_key_map[staff_index] = ClefAndKeySignature(
+                x_start=x_start,
+                x_end=x_end,
+                y_top=staff.top,
+                y_bottom=staff.bottom,
+                staff_index=staff_index,
+            )
+
+        return clef_key_map
+
+    # Crop each clef and key signature from the sheet. Mapping it to a staff index
+    def crop_clef_and_key_signatures(self) -> dict[int, MatLike]:
+        clef_key_map = self.extract_clef_and_key_signatures()
+
+        crops: dict[int, MatLike] = {}
+
+        for staff_index, region in clef_key_map.items():
+            crop = self.image[
+                region.y_top : region.y_bottom + 1,
+                region.x_start : region.x_end,
+            ]
+            crops[staff_index] = crop
         return crops

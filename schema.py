@@ -38,3 +38,12 @@ class Staff:
     spacing: float
     top: int
     bottom: int
+
+
+@dataclass
+class ClefAndKeySignature:
+    x_start: int
+    x_end: int
+    y_top: int
+    y_bottom: int
+    staff_index: int
