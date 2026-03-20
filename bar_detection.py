@@ -128,6 +128,20 @@ class BarDetector:
             # Collect x positions of valid barline candidates
             candidates: list[BarCandidate] = []
             staff_right = max(line.x_end for line in staff.lines)
+            max_width = max(
+                3,  # minimum width in pixels
+                int(round(self.config.max_width_ratio * staff.spacing)),
+            )
+            min_double_width = max(
+                6,
+                int(round(self.config.double_bar_min_width_spacings * staff.spacing)),
+            )
+            right_margin = int(
+                round(self.config.double_bar_right_margin_spacings * staff.spacing)
+            )
+            left_margin = int(round(4.0 * staff.spacing))
+            left_relaxed_max_width = max_width + int(round(0.7 * staff.spacing))
+
             for contour in contours:
                 # Get bounding box of component
                 x, _, width, height = cv.boundingRect(contour)
@@ -138,32 +152,29 @@ class BarDetector:
 
                 # Calculate density (area/width*height) to distinguish solid bars from noise
                 density = cv.contourArea(contour) / float(width * height)
-                if density < self.config.min_density:
-                    continue
-
-                # For wider components, require higher density to avoid false positives
-                # from wide noise blobs
-                max_width = max(
-                    3,  # minimum width in pixels
-                    int(round(self.config.max_width_ratio * staff.spacing)),
-                )
-                if width > max_width and density < self.config.thick_bar_min_density:
-                    continue
 
                 abs_left = left_skip + x
                 abs_right = left_skip + x + width - 1
                 abs_center = left_skip + x + width // 2
-
-                min_double_width = max(
-                    6,
-                    int(
-                        round(self.config.double_bar_min_width_spacings * staff.spacing)
-                    ),
-                )
-                right_margin = int(
-                    round(self.config.double_bar_right_margin_spacings * staff.spacing)
-                )
                 near_right_edge = abs_center >= staff_right - right_margin
+                near_left_edge = abs_center <= left_skip + left_margin
+                is_left_relaxed = (
+                    near_left_edge
+                    and width <= left_relaxed_max_width
+                    and density >= 0.50
+                )
+
+                if density < self.config.min_density and not is_left_relaxed:
+                    continue
+
+                # For wider components, require higher density to avoid false positives
+                # from wide noise blobs.
+                if (
+                    width > max_width
+                    and density < self.config.thick_bar_min_density
+                    and not is_left_relaxed
+                ):
+                    continue
 
                 if width >= min_double_width and near_right_edge:
                     candidates.append(BarCandidate(x=abs_left, kind="double_left"))
@@ -202,8 +213,40 @@ class BarDetector:
                     kind="single",
                 )
 
+            pair_gap = max(2, int(round(1.5 * staff.spacing)))
+            edge_margin = int(round(4.0 * staff.spacing))
+            left_edge = left_skip + edge_margin
+            right_edge = staff_right - edge_margin
+            typed_candidates: list[BarCandidate] = []
+            i = 0
+
+            while i < len(merged_candidates):
+                if i + 1 < len(merged_candidates):
+                    left = merged_candidates[i]
+                    right = merged_candidates[i + 1]
+                    is_close_pair = right.x - left.x <= pair_gap
+                    on_edge = right.x <= left_edge or left.x >= right_edge
+
+                    if (
+                        left.kind == "single"
+                        and right.kind == "single"
+                        and is_close_pair
+                        and on_edge
+                    ):
+                        typed_candidates.append(
+                            BarCandidate(x=left.x, kind="double_left")
+                        )
+                        typed_candidates.append(
+                            BarCandidate(x=right.x, kind="double_right")
+                        )
+                        i += 2
+                        continue
+
+                typed_candidates.append(merged_candidates[i])
+                i += 1
+
             # Create BarLine objects for each merged detection
-            for candidate in merged_candidates:
+            for candidate in typed_candidates:
                 bars.append(
                     BarLine(
                         x=candidate.x,
