@@ -12,13 +12,13 @@ from schema import BarLine, Staff
 @dataclass(frozen=True)
 class BarOverlayConfig:
     line_color: tuple[int, int, int] = (MASK_OFF, MASK_OFF, MASK_ON)
-    line_thickness: int = 2
+    line_thickness: int = 1
 
 
 @dataclass(frozen=True)
 class BarDetectionConfig:
     left_skip_spacings: float = (
-        7.0  # staff spacings to skip from the left to ignore clef/key signature
+        5.0  # staff spacings to skip from the left to ignore clef/key signature
     )
     # Multiplier for staff spacing to determine closing kernel height for joining broken bars
     vertical_close_height_ratio: float = 2.0
