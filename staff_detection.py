@@ -4,6 +4,10 @@ Staff detection and two ways to erase staff lines from the page:
   detect()     — find each staff (5 lines, spacing, bounds) using Otsu + morphology.
   erase_staff_for_bars() — same Otsu binary, erase only near detected lines (barlines stay).
   erase_staff_for_notes() — adaptive binarization + horizontal morphology (better for notes).
+
+After subtraction, an optional vertical MORPH_CLOSE can seal slits from staff removal.
+That repair is applied only inside thin bands around each *detected* staff line (not
+globally), so hollow note heads and other holes away from staff heights stay intact.
 """
 
 from dataclasses import dataclass
@@ -29,6 +33,50 @@ class StaffDetectionConfig:
     min_staff_gap_tolerance_px: float = 2.0
     staff_vertical_margin_in_spacings: float = 2.0
     removal_band_half_height_ratio: float = 0.2
+    # Vertical MORPH_CLOSE height after staff erase; 0 = off.
+    slit_repair_vertical: int = 3
+    # Narrower than removal_band_*: only these rows get slit repair (avoids filling note holes).
+    slit_repair_band_half_height_ratio: float = 0.1
+
+
+def _repair_slits(ink: MatLike, vertical_extent: int) -> MatLike:
+    """Close thin horizontal gaps in foreground using vertical MORPH_CLOSE."""
+    if vertical_extent <= 0:
+        return ink
+    k = max(3, min(7, vertical_extent))
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, k))
+    return cv.morphologyEx(ink, cv.MORPH_CLOSE, kernel)
+
+
+def _slit_repair_band_mask(
+    shape: tuple[int, ...],
+    staffs: list[Staff],
+    config: StaffDetectionConfig,
+) -> np.ndarray:
+    """255 only near detected staff line y positions (tight band)."""
+    h, w = int(shape[0]), int(shape[1])
+    mask = np.zeros((h, w), dtype=np.uint8)
+    ratio = config.slit_repair_band_half_height_ratio
+    for staff in staffs:
+        band_half = max(1, int(round(staff.spacing * ratio)))
+        for line in staff.lines:
+            y0 = max(0, line.y - band_half)
+            y1 = min(h, line.y + band_half + 1)
+            x0 = max(0, line.x_start)
+            x1 = min(w, line.x_end + 1)
+            mask[y0:y1, x0:x1] = MASK_ON
+    return mask
+
+
+def _blend_slit_repair(
+    original: MatLike,
+    repaired: MatLike,
+    staffs: list[Staff],
+    config: StaffDetectionConfig,
+) -> MatLike:
+    """Use repaired pixels only where band mask is set."""
+    mask = _slit_repair_band_mask(original.shape, staffs, config)
+    return np.where(mask > 0, repaired, original).astype(original.dtype)
 
 
 def _otsu_binary(gray: MatLike, config: StaffDetectionConfig) -> MatLike:
@@ -73,11 +121,19 @@ def erase_staff_for_bars(
             x1 = min(horizontal.shape[1], line.x_end + 1)
             allowed[y0:y1, x0:x1] = MASK_ON
 
-    return cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
+    out = cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
+    if config.slit_repair_vertical <= 0:
+        return out
+    repaired = _repair_slits(out, config.slit_repair_vertical)
+    return _blend_slit_repair(out, repaired, staffs, config)
 
 
-def erase_staff_for_notes(gray: MatLike) -> MatLike:
-    """Adaptive threshold + long horizontal morphology; subtract horizontal lines from binary."""
+def erase_staff_for_notes(
+    gray: MatLike,
+    staffs: list[Staff] | None = None,
+    config: StaffDetectionConfig | None = None,
+) -> MatLike:
+    """Adaptive threshold + horizontal morphology; subtract staff lines."""
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
         inverted,
@@ -91,7 +147,15 @@ def erase_staff_for_notes(gray: MatLike) -> MatLike:
     k = max(1, h.shape[1] // 30)
     structure = cv.getStructuringElement(cv.MORPH_RECT, (k, 1))
     h = cv.dilate(cv.erode(h, structure), structure)
-    return cv.subtract(bw, h)
+    out = cv.subtract(bw, h)
+    if (
+        staffs is None
+        or config is None
+        or config.slit_repair_vertical <= 0
+    ):
+        return out
+    repaired = _repair_slits(out, config.slit_repair_vertical)
+    return _blend_slit_repair(out, repaired, staffs, config)
 
 
 @dataclass(frozen=True)

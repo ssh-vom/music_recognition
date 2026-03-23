@@ -6,7 +6,7 @@ import cv2 as cv
 from cv2.typing import MatLike
 
 from schema import BarLine, Measure, Staff, ClefAndKeySignature
-from staff_detection import erase_staff_for_notes
+from staff_detection import StaffDetectionConfig, erase_staff_for_notes
 
 
 @dataclass
@@ -24,12 +24,13 @@ class MeasureSplitter:
         sheet_img: MatLike,
         config: MeasureDetectionConfig | None = None,
         notes_image: MatLike | None = None,
+        staff_config: StaffDetectionConfig | None = None,
     ):
         self.bars = bars
         self.staffs = staffs
         self.image = sheet_img
         self.config = config or MeasureDetectionConfig()
-        # Full page after erase_staff_for_notes; measure crops are slices of this.
+        self.staff_config = staff_config or StaffDetectionConfig()
         self.notes_image = notes_image
 
     def _group_barlines_by_staff(self) -> dict[int, list[BarLine]]:
@@ -208,7 +209,9 @@ class MeasureSplitter:
                         if len(crop.shape) == 2
                         else cv.cvtColor(crop, cv.COLOR_BGR2GRAY)
                     )
-                    cleaned = erase_staff_for_notes(gray)
+                    cleaned = erase_staff_for_notes(
+                        gray, staffs=self.staffs, config=self.staff_config
+                    )
                 staff_crops.append(cleaned)
 
             crops[staff_index] = staff_crops
