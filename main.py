@@ -3,13 +3,10 @@ import numpy as np
 import re
 from cv2.typing import MatLike
 import pytesseract
-from staff_detection import StaffDetector
+from staff_detection import StaffDetector, erase_staff_for_bars, erase_staff_for_notes
 from bar_detection import BarDetector
 from measure_splitting import MeasureSplitter
 from note_detection import NoteDetector
-
-# Optical Music Recognition pipeline for sheet music to ABC conversion
-
 
 def main():
 
@@ -20,11 +17,13 @@ def main():
         )
 
     J = preprocess(I)
+    # Staves -> binary for geometry; two erasures: bars (Otsu+mask) vs notes (adaptive morph).
     det = StaffDetector(I)
-    staffs, _, _ = det.detect()
+    staffs, binary, _ = det.detect()
     overlay = det.draw_overlay(staffs)
-    removed = det.remove_staffs(staffs)
-    bar_det = BarDetector(removed, I, staffs)
+    image_for_bars = erase_staff_for_bars(binary, staffs, det.config)
+    image_for_notes = erase_staff_for_notes(det.to_gray())
+    bar_det = BarDetector(image_for_bars, I, staffs)
     bars = bar_det.detect()
     overlay_bar = bar_det.draw_overlay()
     print(f"Number of bars detected {len(bars)}")
@@ -34,7 +33,7 @@ def main():
         )
         print(f"y= {bar.y_top},{bar.y_bottom}")
     bpm, raw = extract_bpm(J)
-    ms = MeasureSplitter(bars, staffs, I)
+    ms = MeasureSplitter(bars, staffs, I, notes_image=image_for_notes)
     measures = ms.split_measures()
     cropped = ms.crop_measures()
     clef_key_crops = ms.crop_clef_and_key_signatures()
@@ -76,10 +75,10 @@ def main():
 
     print("BPM:", bpm, "| OCR:", raw)
     # cv.imshow(winname="filtered", mat=J)
-    # cv.imwrite("staff_overlay.jpg", overlay)
-    # cv.imshow("Removed staff lines", removed)
-    # cv.imshow("Overlay bar", overlay_bar)
-    # cv.imwrite("removed.jpg", removed)
+    cv.imwrite("staff_overlay.jpg", overlay)
+    cv.imshow("Staff erased (bars)", image_for_bars)
+    cv.imshow("Staff erased (notes)", image_for_notes)
+    cv.imshow("Overlay bar", overlay_bar)
     cv.waitKey(0)
     cv.destroyAllWindows()
 
