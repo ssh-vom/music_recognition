@@ -3,7 +3,9 @@ Staff detection and two ways to erase staff lines from the page:
 
   detect()     — find each staff (5 lines, spacing, bounds) using Otsu + morphology.
   erase_staff_for_bars() — same Otsu binary, erase only near detected lines (barlines stay).
-  erase_staff_for_notes() — adaptive binarization + horizontal morphology (better for notes).
+  erase_staff_for_notes() — adaptive binarization + horizontal morphology; subtract only
+  inside bands around detected staff lines (same as bars), so beams and other short
+  horizontals between lines are kept.
 
 After subtraction, an optional vertical MORPH_CLOSE can seal slits from staff removal.
 That repair is applied only inside thin bands around each *detected* staff line (not
@@ -101,6 +103,27 @@ def _horizontal_line_mask(binary: MatLike, config: StaffDetectionConfig) -> MatL
     return cv.morphologyEx(binary, cv.MORPH_OPEN, kernel)
 
 
+def _staff_removal_band_mask(
+    shape: tuple[int, ...],
+    staffs: list[Staff],
+    config: StaffDetectionConfig,
+) -> np.ndarray:
+    """Where horizontal staff ink may be removed (around each detected staff line)."""
+    h, w = int(shape[0]), int(shape[1])
+    allowed = np.zeros((h, w), dtype=np.uint8)
+    for staff in staffs:
+        band = max(
+            1, int(round(staff.spacing * config.removal_band_half_height_ratio))
+        )
+        for line in staff.lines:
+            y0 = max(0, line.y - band)
+            y1 = min(h, line.y + band + 1)
+            x0 = max(0, line.x_start)
+            x1 = min(w, line.x_end + 1)
+            allowed[y0:y1, x0:x1] = MASK_ON
+    return allowed
+
+
 def erase_staff_for_bars(
     binary: MatLike,
     staffs: list[Staff],
@@ -108,19 +131,7 @@ def erase_staff_for_bars(
 ) -> MatLike:
     """Remove staff ink using line positions from detect(); keeps vertical bar strokes."""
     horizontal = _horizontal_line_mask(binary, config)
-    allowed = np.zeros_like(horizontal)
-
-    for staff in staffs:
-        band = max(
-            1, int(round(staff.spacing * config.removal_band_half_height_ratio))
-        )
-        for line in staff.lines:
-            y0 = max(0, line.y - band)
-            y1 = min(horizontal.shape[0], line.y + band + 1)
-            x0 = max(0, line.x_start)
-            x1 = min(horizontal.shape[1], line.x_end + 1)
-            allowed[y0:y1, x0:x1] = MASK_ON
-
+    allowed = _staff_removal_band_mask(binary.shape, staffs, config)
     out = cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
     if config.slit_repair_vertical <= 0:
         return out
@@ -133,7 +144,7 @@ def erase_staff_for_notes(
     staffs: list[Staff] | None = None,
     config: StaffDetectionConfig | None = None,
 ) -> MatLike:
-    """Adaptive threshold + horizontal morphology; subtract staff lines."""
+    """Adaptive threshold, horizontal open, subtract staff lines only near detected y positions."""
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
         inverted,
@@ -147,7 +158,11 @@ def erase_staff_for_notes(
     k = max(1, h.shape[1] // 30)
     structure = cv.getStructuringElement(cv.MORPH_RECT, (k, 1))
     h = cv.dilate(cv.erode(h, structure), structure)
-    out = cv.subtract(bw, h)
+    if staffs is not None and config is not None:
+        allowed = _staff_removal_band_mask(bw.shape, staffs, config)
+        out = cv.subtract(bw, cv.bitwise_and(h, allowed))
+    else:
+        out = cv.subtract(bw, h)
     if (
         staffs is None
         or config is None
