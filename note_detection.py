@@ -1,7 +1,13 @@
 import cv2 as cv
+import numpy as np
 from cv2.typing import MatLike
 
-from schema import Measure, Note, Staff
+from schema import Clef, KeySignature, Measure, Note, Staff
+
+LETTER_ORDER = ("C", "D", "E", "F", "G", "A", "B")
+LETTER_TO_INDEX = {letter: index for index, letter in enumerate(LETTER_ORDER)}
+SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")
+FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
 
 
 class NoteDetector:
@@ -136,11 +142,17 @@ class NoteDetector:
 
         detected_notes: list[Note] = []
         for note_center_x_local_px, note_center_y_local_px, _ in merged_note_centers:
-            note_step = int(
-                round(
-                    (bottom_staff_line_local_y - note_center_y_local_px)
-                    / staff_half_step_px
-                )
+            note_step_float = (
+                bottom_staff_line_local_y - note_center_y_local_px
+            ) / staff_half_step_px
+            note_step = int(round(note_step_float))
+            step_residual = abs(note_step_float - note_step)
+            step_confidence = self._step_confidence(step_residual)
+            duration_class = self._classify_duration(
+                cleaned_measure_mask=cleaned_measure_mask,
+                center_x=note_center_x_local_px,
+                center_y=note_center_y_local_px,
+                staff_spacing=staff.spacing,
             )
 
             detected_notes.append(
@@ -151,11 +163,125 @@ class NoteDetector:
                     center_x=note_center_x_local_px,
                     center_y=note_center_y_local_px,
                     step=note_step,
+                    step_confidence=step_confidence,
+                    duration_class=duration_class,
                 )
             )
 
         detected_notes.sort(key=lambda note: note.center_x)
         return detected_notes
+
+    @staticmethod
+    def _step_confidence(step_residual: float) -> str:
+        if step_residual <= 0.20:
+            return "high"
+        if step_residual <= 0.40:
+            return "medium"
+        return "low"
+
+    def _classify_duration(
+        self,
+        cleaned_measure_mask: MatLike,
+        center_x: int,
+        center_y: int,
+        staff_spacing: float,
+    ) -> str | None:
+        is_filled = self._is_filled_notehead(
+            cleaned_measure_mask=cleaned_measure_mask,
+            center_x=center_x,
+            center_y=center_y,
+            staff_spacing=staff_spacing,
+        )
+        has_stem = self._has_stem(
+            cleaned_measure_mask=cleaned_measure_mask,
+            center_x=center_x,
+            center_y=center_y,
+            staff_spacing=staff_spacing,
+        )
+
+        if not is_filled and not has_stem:
+            return "whole"
+        if not is_filled and has_stem:
+            return "half"
+        if is_filled and has_stem:
+            return "quarter"
+        return None
+
+    @staticmethod
+    def _is_filled_notehead(
+        cleaned_measure_mask: MatLike,
+        center_x: int,
+        center_y: int,
+        staff_spacing: float,
+    ) -> bool:
+        radius_x = max(2, int(round(staff_spacing * 0.36)))
+        radius_y = max(2, int(round(staff_spacing * 0.28)))
+
+        x1 = max(0, center_x - radius_x)
+        x2 = min(cleaned_measure_mask.shape[1], center_x + radius_x + 1)
+        y1 = max(0, center_y - radius_y)
+        y2 = min(cleaned_measure_mask.shape[0], center_y + radius_y + 1)
+
+        roi = cleaned_measure_mask[y1:y2, x1:x2]
+        if roi.size == 0:
+            return False
+
+        ellipse_mask = np.zeros(roi.shape, dtype=np.uint8)
+        local_center = (center_x - x1, center_y - y1)
+        cv.ellipse(
+            ellipse_mask,
+            local_center,
+            (max(1, radius_x - 1), max(1, radius_y - 1)),
+            0,
+            0,
+            360,
+            255,
+            -1,
+        )
+
+        ellipse_area = cv.countNonZero(ellipse_mask)
+        if ellipse_area <= 0:
+            return False
+
+        ink_inside = cv.countNonZero(cv.bitwise_and(roi, roi, mask=ellipse_mask))
+        ink_ratio = ink_inside / float(ellipse_area)
+        return ink_ratio >= 0.55
+
+    @staticmethod
+    def _has_stem(
+        cleaned_measure_mask: MatLike,
+        center_x: int,
+        center_y: int,
+        staff_spacing: float,
+    ) -> bool:
+        x_radius = max(2, int(round(staff_spacing * 0.85)))
+        y_radius = max(3, int(round(staff_spacing * 2.6)))
+
+        x1 = max(0, center_x - x_radius)
+        x2 = min(cleaned_measure_mask.shape[1], center_x + x_radius + 1)
+        y1 = max(0, center_y - y_radius)
+        y2 = min(cleaned_measure_mask.shape[0], center_y + y_radius + 1)
+
+        roi = cleaned_measure_mask[y1:y2, x1:x2]
+        if roi.size == 0 or roi.shape[1] < 2:
+            return False
+
+        min_vertical_run = max(3, int(round(staff_spacing * 1.2)))
+        for x in range(roi.shape[1]):
+            run_length = 0
+            best_run = 0
+            for y in range(roi.shape[0]):
+                if roi[y, x] > 0:
+                    run_length += 1
+                    if run_length > best_run:
+                        best_run = run_length
+                else:
+                    run_length = 0
+
+            if best_run >= min_vertical_run:
+                return True
+
+        return False
 
     def draw_overlay(
         self,
@@ -175,9 +301,17 @@ class NoteDetector:
 
             note_center = (note.center_x, note.center_y)
             cv.circle(overlay, note_center, 3, (0, 0, 255), 1)
+            confidence_label = note.step_confidence if note.step_confidence else "?"
+            pitch_label = (
+                f"{note.pitch_letter}{note.octave}"
+                if note.pitch_letter is not None and note.octave is not None
+                else "?"
+            )
+            duration_label = note.duration_class if note.duration_class else "?"
+            label = f"{note.step} {confidence_label} {pitch_label} {duration_label}"
             cv.putText(
                 overlay,
-                str(note.step),
+                label,
                 (note.center_x + 4, note.center_y - 4),
                 cv.FONT_HERSHEY_SIMPLEX,
                 0.35,
@@ -187,3 +321,52 @@ class NoteDetector:
             )
 
         return overlay
+
+
+def resolve_note_pitches(notes: list[Note], clef: Clef | None) -> None:
+    if clef is None or clef.kind is None:
+        return
+
+    if clef.kind == "treble":
+        base_letter = "E"
+        base_octave = 4
+    elif clef.kind == "bass":
+        base_letter = "G"
+        base_octave = 2
+    else:
+        return
+
+    key_accidentals = _key_signature_accidentals(clef.key_signature)
+
+    for note in notes:
+        letter, octave = _step_to_letter_octave(base_letter, base_octave, note.step)
+        accidental = key_accidentals.get(letter, "")
+        note.pitch_letter = f"{letter}{accidental}"
+        note.octave = octave
+
+
+def _step_to_letter_octave(
+    base_letter: str,
+    base_octave: int,
+    step: int,
+) -> tuple[str, int]:
+    base_index = LETTER_TO_INDEX[base_letter]
+    absolute_index = base_octave * 7 + base_index + step
+    octave = absolute_index // 7
+    letter_index = absolute_index % 7
+    letter = LETTER_ORDER[letter_index]
+    return letter, octave
+
+
+def _key_signature_accidentals(key_signature: KeySignature) -> dict[str, str]:
+    accidentals: dict[str, str] = {}
+    fifths = key_signature.fifths if key_signature.fifths is not None else 0
+
+    if fifths > 0:
+        for letter in SHARP_ORDER[:fifths]:
+            accidentals[letter] = "#"
+    elif fifths < 0:
+        for letter in FLAT_ORDER[: abs(fifths)]:
+            accidentals[letter] = "b"
+
+    return accidentals

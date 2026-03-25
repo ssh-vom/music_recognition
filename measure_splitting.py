@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import cv2 as cv
 from cv2.typing import MatLike
 
-from schema import BarLine, Measure, Staff, ClefAndKeySignature
+from schema import BarLine, Clef, KeySignature, Measure, Staff, TimeSignature
 from staff_detection import StaffDetectionConfig, erase_staff_for_notes
 
 
@@ -218,9 +218,10 @@ class MeasureSplitter:
 
         return crops
 
-    def extract_clef_and_key_signatures(self) -> dict[int, ClefAndKeySignature]:
+    def extract_clef_and_key_signatures(self) -> dict[int, Clef]:
+        """Left header region per staff (clef + key area); kind/key/time filled by detection."""
 
-        clef_key_map: dict[int, ClefAndKeySignature] = {}
+        clef_by_staff: dict[int, Clef] = {}
 
         for staff_index, staff in enumerate(self.staffs):
             assert staff.lines
@@ -228,25 +229,43 @@ class MeasureSplitter:
             x_end = self._content_start_x(staff)
             assert x_end > x_start
 
-            clef_key_map[staff_index] = ClefAndKeySignature(
+            clef_by_staff[staff_index] = Clef(
+                staff_index=staff_index,
+                kind=None,
                 x_start=x_start,
                 x_end=x_end,
                 y_top=staff.top,
                 y_bottom=staff.bottom,
-                staff_index=staff_index,
+                key_signature=KeySignature(),
+                time_signature=TimeSignature(),
             )
 
-        return clef_key_map
+        return clef_by_staff
 
-    def crop_clef_and_key_signatures(self) -> dict[int, MatLike]:
-        clef_key_map = self.extract_clef_and_key_signatures()
+    def crop_clef_and_key_signatures(
+        self,
+        clefs: dict[int, Clef] | None = None,
+        *,
+        source_image: MatLike | None = None,
+    ) -> dict[int, MatLike]:
+        """Crop clef + key header. Prefer ``source_image`` (e.g. staff-erased ``notes_image``).
+
+        When ``source_image`` is None, uses ``self.notes_image`` if set, else ``self.image``.
+        """
+        clef_by_staff = (
+            clefs if clefs is not None else self.extract_clef_and_key_signatures()
+        )
+
+        src = source_image
+        if src is None:
+            src = self.notes_image if self.notes_image is not None else self.image
 
         crops: dict[int, MatLike] = {}
 
-        for staff_index, region in clef_key_map.items():
-            crop = self.image[
-                region.y_top : region.y_bottom + 1,
-                region.x_start : region.x_end,
+        for staff_index, clef in clef_by_staff.items():
+            crop = src[
+                clef.y_top : clef.y_bottom + 1,
+                clef.x_start : clef.x_end,
             ]
             crops[staff_index] = crop
         return crops
