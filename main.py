@@ -9,6 +9,7 @@ from bar_detection import BarDetector, BarLine
 from measure_splitting import MeasureDetectionConfig, MeasureSplitter
 from clef_detection import ClefDetector, ClefDetectorConfig
 from note_detection import NoteDetector, resolve_note_pitches
+from abc_export import write_abc_file
 
 OverlayRect = tuple[int, int, int, int]
 OverlayChoice = tuple[OverlayRect, tuple[int, int, int]] | None
@@ -41,6 +42,18 @@ def main() -> None:
         clefs_by_staff=clefs_by_staff,
     )
     log_note_detections(notes_by_staff)
+    write_abc_file(
+        notes_by_staff=notes_by_staff,
+        measures_map=measures_map,
+        bars=bars,
+        output_path="output.abc",
+        title="Twinkle Twinkle Little Star",
+        meter="4/4",
+        unit_note_length="1/4",
+        key="C",
+        tempo_qpm=120,
+    )
+    print("Wrote ABC: output.abc")
 
     clef_overlay = draw_clef_overlay_simple(sheet_bgr, clefs_by_staff, clef_detections)
     notes_overlay = draw_notes_overlay(sheet_bgr, measures_map, notes_by_staff)
@@ -62,10 +75,9 @@ def main() -> None:
 
 
 def crop_sheet_vertical(sheet_bgr: MatLike) -> MatLike:
-    height = sheet_bgr.shape[0]
-    top_crop = int(0.18 * height)
-    bottom_crop = int(0.8 * height)
-    return sheet_bgr[top_crop:bottom_crop, :]
+    # Keep full page by default. Earlier hard-coded cropping could clip
+    # top/bottom systems on differently-framed uploads.
+    return sheet_bgr
 
 
 def detect_staffs(sheet_bgr: MatLike) -> tuple[StaffDetector, list]:

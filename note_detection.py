@@ -1,4 +1,5 @@
 import cv2 as cv
+import math
 import numpy as np
 from cv2.typing import MatLike
 
@@ -11,6 +12,11 @@ FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
 
 
 class NoteDetector:
+    # Slight downward bias: require a bit more evidence before rounding up to
+    # the next half-step bin. This helps borderline line/space cases where the
+    # detected center is a touch too high.
+    STEP_ROUND_UP_THRESHOLD = 0.58
+
     def detect(
         self,
         cleaned_measure_mask: MatLike,
@@ -145,7 +151,7 @@ class NoteDetector:
             note_step_float = (
                 bottom_staff_line_local_y - note_center_y_local_px
             ) / staff_half_step_px
-            note_step = int(round(note_step_float))
+            note_step = self._quantize_step(note_step_float)
             step_residual = abs(note_step_float - note_step)
             step_confidence = self._step_confidence(step_residual)
             duration_class = self._classify_duration(
@@ -170,6 +176,14 @@ class NoteDetector:
 
         detected_notes.sort(key=lambda note: note.center_x)
         return detected_notes
+
+    @classmethod
+    def _quantize_step(cls, note_step_float: float) -> int:
+        lower = math.floor(note_step_float)
+        fraction = note_step_float - lower
+        if fraction >= cls.STEP_ROUND_UP_THRESHOLD:
+            return lower + 1
+        return lower
 
     @staticmethod
     def _step_confidence(step_residual: float) -> str:
