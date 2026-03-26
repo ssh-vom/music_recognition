@@ -14,6 +14,9 @@ class MeasureDetectionConfig:
     left_header_spacings: float = 7.0
     bar_trim_ratio: float = 0.25
     min_width_px: float = 4
+    # Optional override for first staff's first measure start.
+    # Useful when lower staves need a looser left crop but staff 0 should stay conservative.
+    first_staff_conservative_spacings: float | None = None
 
 
 class MeasureSplitter:
@@ -186,7 +189,30 @@ class MeasureSplitter:
                 staff_bars=staff_bars,
             )
 
+        self._apply_first_staff_start_policy(measures_map)
         return measures_map
+
+    def _apply_first_staff_start_policy(
+        self,
+        measures_map: dict[int, list[Measure]],
+    ) -> None:
+        spacings = self.config.first_staff_conservative_spacings
+        if spacings is None:
+            return
+
+        first_staff_index = 0
+        if first_staff_index >= len(self.staffs):
+            return
+        if first_staff_index not in measures_map:
+            return
+        if not measures_map[first_staff_index]:
+            return
+
+        first_staff = self.staffs[first_staff_index]
+        first_staff_left = self._staff_left(first_staff)
+        conservative_start = first_staff_left + int(round(first_staff.spacing * spacings))
+        first_measure = measures_map[first_staff_index][0]
+        first_measure.x_start = max(first_measure.x_start, conservative_start)
 
     def crop_measures(self) -> dict[int, list[MatLike]]:
         measures_map = self.split_measures()

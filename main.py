@@ -1,22 +1,33 @@
-"""Staff + clef + simple note detection baseline."""
+"""Staff -> bars -> clef -> measures -> notes pipeline with tree output."""
+
+from pathlib import Path
 
 import cv2 as cv
 from cv2.typing import MatLike
 
-from schema import Clef, ClefDetection, Measure, Note, Staff
-from staff_detection import StaffDetector, erase_staff_for_bars, erase_staff_for_notes
-from bar_detection import BarDetector, BarLine
-from measure_splitting import MeasureDetectionConfig, MeasureSplitter
-from clef_detection import ClefDetector, ClefDetectorConfig
-from note_detection import NoteDetector, resolve_note_pitches
 from abc_export import write_abc_file
+from artifact_writer import ArtifactWriter
+from bar_detection import BarDetector
+from clef_detection import ClefDetector, ClefDetectorConfig
+from measure_splitting import MeasureDetectionConfig, MeasureSplitter
+from note_detection import NoteDetector, resolve_note_pitches
+from schema import BarLine, Clef, ClefDetection, Measure, Staff
+from score_tree import ScoreTree, build_score_tree
+from staff_detection import StaffDetector, erase_staff_for_bars, erase_staff_for_notes
 
 OverlayRect = tuple[int, int, int, int]
 OverlayChoice = tuple[OverlayRect, tuple[int, int, int]] | None
 
+SHOW_WINDOWS = True
+DEFAULT_TITLE = "Twinkle Twinkle Little Star"
+DEFAULT_METER = "4/4"
+DEFAULT_UNIT_NOTE_LENGTH = "1/4"
+DEFAULT_KEY = "C"
+DEFAULT_TEMPO_QPM = 120
+
 
 def main() -> None:
-    image_path = "./twinkle_twinkle_little_star.png"
+    image_path = "./ode-to-joy.png"
     raw_bgr = cv.imread(filename=image_path)
     if raw_bgr is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
@@ -24,59 +35,85 @@ def main() -> None:
 
     staff_detector, staffs = detect_staffs(sheet_bgr)
     staff_overlay = staff_detector.draw_overlay(staffs)
+
     bars_mask = build_staff_erased_bars_mask(staff_detector, staffs)
     bars, bar_overlay = detect_bars(bars_mask, sheet_bgr, staffs)
+
     notes_mask = build_staff_erased_notes_mask(staff_detector, staffs)
     clefs_by_staff, clef_key_crops = extract_clef_header_crops(
         sheet_bgr, notes_mask, staffs, bars, staff_detector
     )
     clef_detections = detect_clefs(clef_key_crops, clefs_by_staff)
-    log_clef_detections(clef_detections)
+
     measures_map, measure_crops = extract_measure_crops(
         sheet_bgr, notes_mask, staffs, bars, staff_detector
     )
-    notes_by_staff = detect_notes(
-        measure_crops=measure_crops,
-        measures_map=measures_map,
+
+    score_tree = build_score_tree(
+        image_path=image_path,
+        sheet_image=sheet_bgr,
         staffs=staffs,
-        clefs_by_staff=clefs_by_staff,
-    )
-    log_note_detections(notes_by_staff)
-    write_abc_file(
-        notes_by_staff=notes_by_staff,
-        measures_map=measures_map,
         bars=bars,
-        output_path="output.abc",
-        title="Twinkle Twinkle Little Star",
-        meter="4/4",
-        unit_note_length="1/4",
-        key="C",
-        tempo_qpm=120,
+        clefs_by_staff=clefs_by_staff,
+        clef_detections=clef_detections,
+        clef_key_crops=clef_key_crops,
+        measures_map=measures_map,
+        measure_crops=measure_crops,
+        notes_mask=notes_mask,
+        bars_mask=bars_mask,
     )
-    print("Wrote ABC: output.abc")
+    populate_tree_with_notes(score_tree)
 
-    clef_overlay = draw_clef_overlay_simple(sheet_bgr, clefs_by_staff, clef_detections)
-    notes_overlay = draw_notes_overlay(sheet_bgr, measures_map, notes_by_staff)
-    save_clef_debug_crops(clef_key_crops, clefs_by_staff, clef_detections)
-    save_note_debug_crops(measure_crops, notes_by_staff)
+    clef_overlay = draw_clef_overlay(score_tree)
+    notes_overlay = draw_notes_overlay(score_tree)
 
-    cv.imwrite("staff_overlay.jpg", staff_overlay)
-    cv.imwrite("bar_overlay.jpg", bar_overlay)
-    cv.imwrite("clef_overlay.jpg", clef_overlay)
-    cv.imwrite("notes_overlay.jpg", notes_overlay)
+    clef_log = build_clef_log(score_tree)
+    note_log = build_note_log(score_tree)
+    print(clef_log, end="")
+    print(note_log, end="")
 
-    cv.imshow("Staff lines", staff_overlay)
-    cv.imshow("Bar detection", bar_overlay)
-    cv.imshow("Staff erased (notes)", cv.bitwise_not(notes_mask))
-    cv.imshow("Clef detection", clef_overlay)
-    cv.imshow("Note detection", notes_overlay)
-    cv.waitKey(0)
-    cv.destroyAllWindows()
+    artifacts = ArtifactWriter(image_path=image_path)
+    artifacts.write_image(artifacts.sections.staff, "staff_overlay.jpg", staff_overlay)
+    artifacts.write_image(artifacts.sections.bars, "bar_overlay.jpg", bar_overlay)
+    artifacts.write_image(
+        artifacts.sections.masks, "notes_mask_inverted.jpg", cv.bitwise_not(notes_mask)
+    )
+    artifacts.write_image(artifacts.sections.clef, "clef_overlay.jpg", clef_overlay)
+    artifacts.write_image(artifacts.sections.notes, "notes_overlay.jpg", notes_overlay)
+    save_clef_debug_crops(score_tree, artifacts.section_dir(artifacts.sections.clef))
+    save_note_debug_crops(score_tree, artifacts.section_dir(artifacts.sections.notes))
+
+    abc_path = artifacts.text_path(artifacts.sections.export, "output.abc")
+    write_abc_file(
+        score_tree=score_tree,
+        output_path=abc_path,
+        title=DEFAULT_TITLE,
+        meter=DEFAULT_METER,
+        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
+        key=DEFAULT_KEY,
+        tempo_qpm=DEFAULT_TEMPO_QPM,
+    )
+
+    artifacts.write_text(
+        artifacts.sections.logs,
+        "detections.txt",
+        clef_log + note_log,
+    )
+
+    print(f"Artifacts written to: {artifacts.root}")
+    print(f"Wrote ABC: {abc_path}")
+
+    if SHOW_WINDOWS:
+        cv.imshow("Staff lines", staff_overlay)
+        cv.imshow("Bar detection", bar_overlay)
+        cv.imshow("Staff erased (notes)", cv.bitwise_not(notes_mask))
+        cv.imshow("Clef detection", clef_overlay)
+        cv.imshow("Note detection", notes_overlay)
+        cv.waitKey(0)
+        cv.destroyAllWindows()
 
 
 def crop_sheet_vertical(sheet_bgr: MatLike) -> MatLike:
-    # Keep full page by default. Earlier hard-coded cropping could clip
-    # top/bottom systems on differently-framed uploads.
     return sheet_bgr
 
 
@@ -163,9 +200,10 @@ def extract_measure_crops(
     bars: list[BarLine],
     staff_detector: StaffDetector,
 ) -> tuple[dict[int, list[Measure]], dict[int, list[MatLike]]]:
-    # Notes often begin slightly earlier than the conservative header crop used for
-    # clef/key extraction, so use a smaller left header skip here.
-    measure_config = MeasureDetectionConfig(left_header_spacings=5.2)
+    measure_config = MeasureDetectionConfig(
+        left_header_spacings=5.2,
+        first_staff_conservative_spacings=7.0,
+    )
     splitter = MeasureSplitter(
         bars=bars,
         staffs=staffs,
@@ -175,81 +213,50 @@ def extract_measure_crops(
         staff_config=staff_detector.config,
     )
     measures_map = splitter.split_measures()
-
-    # Keep first staff conservative so time-signature glyphs stay in header,
-    # while lower staffs can start earlier to keep pickup notes.
-    first_staff_index = 0
-    if first_staff_index in measures_map and measures_map[first_staff_index]:
-        first_staff = staffs[first_staff_index]
-        first_staff_left = min(line.x_start for line in first_staff.lines)
-        conservative_start = first_staff_left + int(round(first_staff.spacing * 7.0))
-        first_measure = measures_map[first_staff_index][0]
-        first_measure.x_start = max(first_measure.x_start, conservative_start)
-
-    measure_crops: dict[int, list[MatLike]] = {}
-    for staff_index, measures in measures_map.items():
-        staff_crops: list[MatLike] = []
-        for measure in measures:
-            crop = notes_mask[
-                measure.y_top : measure.y_bottom + 1,
-                measure.x_start : measure.x_end,
-            ]
-            staff_crops.append(crop)
-        measure_crops[staff_index] = staff_crops
-
+    measure_crops = splitter.crop_measures()
     return measures_map, measure_crops
 
 
-def detect_notes(
-    measure_crops: dict[int, list[MatLike]],
-    measures_map: dict[int, list[Measure]],
-    staffs: list[Staff],
-    clefs_by_staff: dict[int, Clef],
-) -> dict[int, list[list[Note]]]:
+def populate_tree_with_notes(score_tree: ScoreTree) -> None:
     note_detector = NoteDetector()
-    notes_by_staff: dict[int, list[list[Note]]] = {}
-
-    for staff_index, crops in measure_crops.items():
-        measures = measures_map.get(staff_index, [])
-        if not measures:
-            notes_by_staff[staff_index] = []
-            continue
-
-        staff_notes: list[list[Note]] = []
-        staff = staffs[staff_index]
-        clef = clefs_by_staff.get(staff_index)
-
-        for measure_index, (measure, crop) in enumerate(zip(measures, crops)):
+    for staff_node in score_tree.staff_nodes:
+        clef = staff_node.clef
+        for measure_node in staff_node.measures:
+            if measure_node.crop is None:
+                continue
             detected_notes = note_detector.detect(
-                cleaned_measure_mask=crop,
-                staff=staff,
-                measure=measure,
-                measure_index=measure_index,
+                cleaned_measure_mask=measure_node.crop,
+                staff=staff_node.staff,
+                measure=measure_node.measure,
+                measure_index=measure_node.index,
             )
             resolve_note_pitches(detected_notes, clef)
-            staff_notes.append(detected_notes)
-
-        notes_by_staff[staff_index] = staff_notes
-
-    return notes_by_staff
+            measure_node.notes = detected_notes
 
 
-def log_clef_detections(detections: dict[int, ClefDetection]) -> None:
-    for staff_index, detection in detections.items():
-        print(
-            f"staff {staff_index}: {detection.clef!r}  "
+def build_clef_log(score_tree: ScoreTree) -> str:
+    lines: list[str] = []
+    for staff_node in score_tree.staff_nodes:
+        detection = staff_node.clef_detection
+        if detection is None:
+            continue
+        lines.append(
+            f"staff {staff_node.index}: {detection.clef!r}  "
             f"letter T/B={detection.letter_score_treble:.3f}/{detection.letter_score_bass:.3f}  "
-            f"slide T/B={detection.slide_score_treble:.3f}/{detection.slide_score_bass:.3f}"
+            f"slide T/B={detection.slide_score_treble:.3f}/{detection.slide_score_bass:.3f}\n"
         )
+    return "".join(lines)
 
 
-def log_note_detections(notes_by_staff: dict[int, list[list[Note]]]) -> None:
-    for staff_index, staff_measures in notes_by_staff.items():
-        for measure_index, notes in enumerate(staff_measures):
-            print(
-                f"staff {staff_index}, measure {measure_index}: {len(notes)} noteheads detected"
+def build_note_log(score_tree: ScoreTree) -> str:
+    lines: list[str] = []
+    for staff_node in score_tree.staff_nodes:
+        for measure_node in staff_node.measures:
+            notes = measure_node.notes
+            lines.append(
+                f"staff {staff_node.index}, measure {measure_node.index}: {len(notes)} noteheads detected\n"
             )
-            for note in notes:
+            for note in measure_node.notes:
                 pitch_label = (
                     f"{note.pitch_letter}{note.octave}"
                     if note.pitch_letter is not None and note.octave is not None
@@ -257,10 +264,11 @@ def log_note_detections(notes_by_staff: dict[int, list[list[Note]]]) -> None:
                 )
                 duration_label = note.duration_class if note.duration_class else "?"
                 confidence_label = note.step_confidence if note.step_confidence else "?"
-                print(
+                lines.append(
                     f"  x={note.center_x:>4}, y={note.center_y:>4}, step={note.step:>3}, "
-                    f"conf={confidence_label:<6}, pitch={pitch_label:<4}, duration={duration_label}"
+                    f"conf={confidence_label:<6}, pitch={pitch_label:<4}, duration={duration_label}\n"
                 )
+    return "".join(lines)
 
 
 def choose_overlay_rect(clef: Clef, detection: ClefDetection) -> OverlayChoice:
@@ -311,24 +319,20 @@ def draw_box(
     )
 
 
-def draw_clef_overlay_simple(
-    sheet_bgr: MatLike,
-    clefs_by_staff: dict[int, Clef],
-    detections: dict[int, ClefDetection],
-) -> MatLike:
-    """
-    One header outline per staff, one box for the chosen clef template match, one label line.
-    Letter scores (T vs B) are in the label so you can see the decision without extra clutter.
-    """
-    out = sheet_bgr.copy()
+def draw_clef_overlay(score_tree: ScoreTree) -> MatLike:
+    out = score_tree.sheet_image.copy()
     font = cv.FONT_HERSHEY_SIMPLEX
 
-    for staff_index, clef in clefs_by_staff.items():
-        det = detections[staff_index]
+    for staff_node in score_tree.staff_nodes:
+        clef = staff_node.clef
+        det = staff_node.clef_detection
+        if clef is None or det is None:
+            continue
+
+        staff_index = staff_node.index
         x1, y1 = clef.x_start, clef.y_top
         x2, y2 = clef.x_end, clef.y_bottom
 
-        # Header search region (single, calm outline)
         cv.rectangle(out, (x1, y1), (x2, y2), (100, 100, 100), 1)
 
         choice = choose_overlay_rect(clef, det)
@@ -366,11 +370,9 @@ def draw_clef_overlay_simple(
 
 
 def draw_notes_overlay(
-    sheet_bgr: MatLike,
-    measures_map: dict[int, list[Measure]],
-    notes_by_staff: dict[int, list[list[Note]]],
+    score_tree: ScoreTree,
 ) -> MatLike:
-    out = sheet_bgr.copy()
+    out = score_tree.sheet_image.copy()
     font = cv.FONT_HERSHEY_SIMPLEX
     confidence_color = {
         "high": (0, 180, 0),
@@ -378,12 +380,9 @@ def draw_notes_overlay(
         "low": (0, 80, 255),
     }
 
-    for staff_index, measure_notes in notes_by_staff.items():
-        measures = measures_map.get(staff_index, [])
-        for measure_index, notes in enumerate(measure_notes):
-            if measure_index >= len(measures):
-                continue
-            measure = measures[measure_index]
+    for staff_node in score_tree.staff_nodes:
+        for measure_node in staff_node.measures:
+            measure = measure_node.measure
             cv.rectangle(
                 out,
                 (measure.x_start, measure.y_top),
@@ -391,7 +390,7 @@ def draw_notes_overlay(
                 (120, 120, 120),
                 1,
             )
-            for note in notes:
+            for note in measure_node.notes:
                 abs_x = measure.x_start + note.center_x
                 abs_y = measure.y_top + note.center_y
                 color = confidence_color.get(note.step_confidence, (160, 160, 160))
@@ -418,19 +417,22 @@ def draw_notes_overlay(
 
 
 def save_clef_debug_crops(
-    clef_key_crops: dict[int, MatLike],
-    clefs_by_staff: dict[int, Clef],
-    detections: dict[int, ClefDetection],
+    score_tree: ScoreTree,
+    output_dir: Path,
 ) -> None:
-    """Inverted crops with only the winning match rectangle (same colors as full-page overlay)."""
-    for staff_index, crop in clef_key_crops.items():
+    for staff_node in score_tree.staff_nodes:
+        staff_index = staff_node.index
+        crop = staff_node.clef_key_crop
+        clef = staff_node.clef
+        det = staff_node.clef_detection
+        if crop is None or clef is None or det is None:
+            continue
+
         if len(crop.shape) == 2:
             tile = cv.cvtColor(cv.bitwise_not(crop), cv.COLOR_GRAY2BGR)
         else:
             tile = crop.copy()
 
-        clef = clefs_by_staff[staff_index]
-        det = detections[staff_index]
         choice = choose_overlay_rect(clef, det)
         if choice is not None:
             rect, color = choice
@@ -446,20 +448,26 @@ def save_clef_debug_crops(
             2,
             cv.LINE_AA,
         )
-        cv.imwrite(f"debug_clef_staff{staff_index}.jpg", tile)
+        cv.imwrite(str(output_dir / f"debug_clef_staff{staff_index}.jpg"), tile)
 
 
 def save_note_debug_crops(
-    measure_crops: dict[int, list[MatLike]],
-    notes_by_staff: dict[int, list[list[Note]]],
+    score_tree: ScoreTree,
+    output_dir: Path,
 ) -> None:
     detector = NoteDetector()
-    for staff_index, crops in measure_crops.items():
-        note_lists = notes_by_staff.get(staff_index, [])
-        for measure_index, crop in enumerate(crops):
-            notes = note_lists[measure_index] if measure_index < len(note_lists) else []
-            tile = detector.draw_overlay(crop, notes)
-            cv.imwrite(f"debug_measure_staff{staff_index}_m{measure_index}.jpg", tile)
+    for staff_node in score_tree.staff_nodes:
+        for measure_node in staff_node.measures:
+            if measure_node.crop is None:
+                continue
+            tile = detector.draw_overlay(measure_node.crop, measure_node.notes)
+            cv.imwrite(
+                str(
+                    output_dir
+                    / f"debug_measure_staff{staff_node.index}_m{measure_node.index}.jpg"
+                ),
+                tile,
+            )
 
 
 if __name__ == "__main__":

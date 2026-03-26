@@ -1,12 +1,11 @@
 from pathlib import Path
 
-from schema import BarLine, Measure, Note
+from schema import BarLine, Note
+from score_tree import ScoreTree, StaffNode
 
 
 def write_abc_file(
-    notes_by_staff: dict[int, list[list[Note]]],
-    measures_map: dict[int, list[Measure]],
-    bars: list[BarLine],
+    score_tree: ScoreTree,
     output_path: str | Path,
     *,
     title: str = "Twinkle Twinkle Little Star",
@@ -17,9 +16,7 @@ def write_abc_file(
     tempo_qpm: int = 120,
 ) -> str:
     abc_text = build_abc_text(
-        notes_by_staff=notes_by_staff,
-        measures_map=measures_map,
-        bars=bars,
+        score_tree=score_tree,
         title=title,
         reference_number=reference_number,
         meter=meter,
@@ -33,9 +30,7 @@ def write_abc_file(
 
 
 def build_abc_text(
-    notes_by_staff: dict[int, list[list[Note]]],
-    measures_map: dict[int, list[Measure]],
-    bars: list[BarLine],
+    score_tree: ScoreTree,
     *,
     title: str,
     reference_number: int,
@@ -53,50 +48,35 @@ def build_abc_text(
         f"K:{key}",
     ]
     body = notes_to_abc_body(
-        notes_by_staff=notes_by_staff,
-        measures_map=measures_map,
-        bars=bars,
+        score_tree=score_tree,
         meter=meter,
     )
     return "\n".join(header_lines) + "\n" + body + "\n"
 
 
 def notes_to_abc_body(
-    notes_by_staff: dict[int, list[list[Note]]],
-    measures_map: dict[int, list[Measure]],
-    bars: list[BarLine],
+    score_tree: ScoreTree,
     *,
     meter: str,
 ) -> str:
     staff_lines: list[str] = []
     default_rest = _default_measure_rest(meter)
     beats_per_measure = _meter_numerator(meter)
-    bars_by_staff = _group_bars_by_staff(bars)
 
-    for staff_index in sorted(notes_by_staff.keys()):
-        segments: list[str] = []
-        staff_notes = notes_by_staff[staff_index]
-        staff_measures = measures_map.get(staff_index, [])
-        if not staff_measures:
+    for staff_node in sorted(score_tree.staff_nodes, key=lambda node: node.index):
+        if not staff_node.measures:
             continue
+        segments: list[str] = []
 
-        start_repeat = _has_left_begin_repeat(
-            staff_bars=bars_by_staff.get(staff_index, []),
-            first_measure=staff_measures[0],
-        )
+        start_repeat = _has_left_begin_repeat(staff_node)
         if start_repeat:
             segments.append("|:")
         else:
             segments.append("|")
 
-        closing_bars = _closing_bars_for_measures(
-            staff_bars=bars_by_staff.get(staff_index, []),
-            staff_measures=staff_measures,
-        )
-
-        for measure_index, notes in enumerate(staff_notes):
+        for measure_index, measure_node in enumerate(staff_node.measures):
             tokens = _notes_to_measure_tokens(
-                notes=notes,
+                notes=measure_node.notes,
                 beats_per_measure=beats_per_measure,
             )
             if not tokens:
@@ -104,19 +84,12 @@ def notes_to_abc_body(
 
             segments.append(" ".join(tokens))
 
-            if measure_index < len(staff_notes) - 1:
-                boundary_bar = (
-                    closing_bars[measure_index]
-                    if measure_index < len(closing_bars)
-                    else None
-                )
+            if measure_index < len(staff_node.measures) - 1:
+                boundary_bar = measure_node.closing_bar
                 segments.append(_boundary_separator(boundary_bar))
             else:
                 # Emit right-edge repeat/final bar markers when detected.
-                staff_end_bar = _staff_end_bar(
-                    staff_bars=bars_by_staff.get(staff_index, []),
-                    last_measure=staff_measures[-1],
-                )
+                staff_end_bar = staff_node.end_bar
                 if staff_end_bar is not None and staff_end_bar.repeat == "end":
                     segments.append(":|")
                 else:
@@ -148,60 +121,18 @@ def _meter_numerator(meter: str) -> int:
     return numerator
 
 
-def _group_bars_by_staff(bars: list[BarLine]) -> dict[int, list[BarLine]]:
-    grouped: dict[int, list[BarLine]] = {}
-    for bar in bars:
-        grouped.setdefault(bar.staff_index, []).append(bar)
-    for staff_bars in grouped.values():
-        staff_bars.sort(key=lambda bar: bar.x)
-    return grouped
-
-
-def _has_left_begin_repeat(staff_bars: list[BarLine], first_measure: Measure) -> bool:
-    if not staff_bars:
+def _has_left_begin_repeat(staff_node: StaffNode) -> bool:
+    if not staff_node.bars:
         return False
+    if not staff_node.measures:
+        return False
+
+    first_measure = staff_node.measures[0].measure
     tol = 8
-    for bar in staff_bars:
+    for bar in staff_node.bars:
         if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
             return True
     return False
-
-
-def _closing_bars_for_measures(
-    staff_bars: list[BarLine],
-    staff_measures: list[Measure],
-) -> list[BarLine]:
-    if not staff_bars or not staff_measures:
-        return []
-
-    first_start = staff_measures[0].x_start
-    last_end = staff_measures[-1].x_end
-    usable = [bar for bar in staff_bars if first_start < bar.x < (last_end + 12)]
-
-    closers: list[BarLine] = []
-    for index, bar in enumerate(usable):
-        if bar.kind == "double_left":
-            if index + 1 < len(usable) and usable[index + 1].kind == "double_right":
-                continue
-        closers.append(bar)
-
-    # Splitter appends a final measure after iterating closure bars, so at most
-    # measure_count - 1 bars are separators.
-    needed = max(0, len(staff_measures) - 1)
-    return closers[:needed]
-
-
-def _staff_end_bar(
-    staff_bars: list[BarLine],
-    last_measure: Measure,
-) -> BarLine | None:
-    tol = 10
-    right_candidates = [
-        bar for bar in staff_bars if bar.x >= (last_measure.x_end - tol)
-    ]
-    if not right_candidates:
-        return None
-    return max(right_candidates, key=lambda bar: bar.x)
 
 
 def _boundary_separator(bar: BarLine | None) -> str:
