@@ -46,9 +46,17 @@ class NoteDetector:
             cv.MORPH_CLOSE,
             close_kernel,
         )
+        secondary_note_mask = cv.morphologyEx(
+            cleaned_measure_mask,
+            cv.MORPH_CLOSE,
+            close_kernel,
+        )
 
         component_count, _, component_stats, component_centroids = (
             cv.connectedComponentsWithStats(notehead_mask, connectivity=8)
+        )
+        secondary_count, _, secondary_stats, secondary_centroids = (
+            cv.connectedComponentsWithStats(secondary_note_mask, connectivity=8)
         )
 
         min_notehead_area_px = staff.spacing * staff.spacing * 0.08
@@ -57,6 +65,7 @@ class NoteDetector:
         max_notehead_size_px = int(round(staff.spacing * 1.9))
         min_notehead_aspect_ratio = 0.45
         max_notehead_aspect_ratio = 2.2
+        tiny_component_area_px = staff.spacing * staff.spacing * 0.22
 
         bottom_staff_line_local_y = int(round(staff.lines[4].y - measure.y_top))
         staff_half_step_px = staff.spacing / 2.0
@@ -94,6 +103,19 @@ class NoteDetector:
 
             note_center_x_local_px = int(round(component_centroids[component_index][0]))
             note_center_y_local_px = int(round(component_centroids[component_index][1]))
+            if component_area_px <= tiny_component_area_px:
+                recovered_center = self._recover_center_from_secondary_component(
+                    center_x=note_center_x_local_px,
+                    center_y=note_center_y_local_px,
+                    secondary_count=secondary_count,
+                    secondary_stats=secondary_stats,
+                    secondary_centroids=secondary_centroids,
+                    staff_spacing=staff.spacing,
+                    max_x=int(cleaned_measure_mask.shape[1] - 1),
+                    max_y=int(cleaned_measure_mask.shape[0] - 1),
+                )
+                if recovered_center is not None:
+                    note_center_x_local_px, note_center_y_local_px = recovered_center
             raw_note_centers.append((note_center_x_local_px, note_center_y_local_px))
 
         raw_note_centers.sort(key=lambda center: center[0])
@@ -146,6 +168,14 @@ class NoteDetector:
                 [note_center_x_local_px, note_center_y_local_px, 1]
             )
 
+        merged_note_centers = self._augment_centers_from_stem_components(
+            cleaned_measure_mask=cleaned_measure_mask,
+            merged_note_centers=merged_note_centers,
+            staff_spacing=staff.spacing,
+            measure_width_px=cleaned_measure_mask.shape[1],
+            merge_distance_px=merge_distance_px,
+        )
+
         detected_notes: list[Note] = []
         for note_center_x_local_px, note_center_y_local_px, _ in merged_note_centers:
             note_step_float = (
@@ -175,6 +205,10 @@ class NoteDetector:
             )
 
         detected_notes.sort(key=lambda note: note.center_x)
+        detected_notes = self._collapse_close_duplicate_notes(
+            detected_notes=detected_notes,
+            staff_spacing=staff.spacing,
+        )
         return detected_notes
 
     @classmethod
@@ -192,6 +226,149 @@ class NoteDetector:
         if step_residual <= 0.40:
             return "medium"
         return "low"
+
+    def _augment_centers_from_stem_components(
+        self,
+        *,
+        cleaned_measure_mask: MatLike,
+        merged_note_centers: list[list[int]],
+        staff_spacing: float,
+        measure_width_px: int,
+        merge_distance_px: int,
+    ) -> list[list[int]]:
+        if len(merged_note_centers) > 2:
+            return merged_note_centers
+
+        component_count, _, stats, _ = cv.connectedComponentsWithStats(
+            cleaned_measure_mask, connectivity=8
+        )
+        augmented = [center.copy() for center in merged_note_centers]
+        x_edge_margin = max(2, int(round(staff_spacing * 0.6)))
+        added_candidates = 0
+
+        for component_index in range(1, component_count):
+            x = int(stats[component_index, cv.CC_STAT_LEFT])
+            y = int(stats[component_index, cv.CC_STAT_TOP])
+            width = int(stats[component_index, cv.CC_STAT_WIDTH])
+            height = int(stats[component_index, cv.CC_STAT_HEIGHT])
+            area = float(stats[component_index, cv.CC_STAT_AREA])
+
+            if height < int(round(staff_spacing * 2.0)):
+                continue
+            if width > int(round(staff_spacing * 1.5)):
+                continue
+            if area < staff_spacing * staff_spacing * 0.35:
+                continue
+            if x + width >= measure_width_px - x_edge_margin:
+                continue
+
+            candidate_x = x + width // 2
+            candidate_y = y + height - max(1, int(round(staff_spacing * 0.55)))
+
+            overlaps_existing = False
+            for center_x, center_y, _ in augmented:
+                if (
+                    abs(candidate_x - center_x) <= int(round(merge_distance_px * 1.2))
+                    and abs(candidate_y - center_y) <= int(round(staff_spacing * 1.2))
+                ):
+                    overlaps_existing = True
+                    break
+            if overlaps_existing:
+                continue
+
+            augmented.append([candidate_x, candidate_y, 1])
+            added_candidates += 1
+            if added_candidates >= 1:
+                break
+
+        augmented.sort(key=lambda center: center[0])
+        return augmented
+
+    def _collapse_close_duplicate_notes(
+        self,
+        *,
+        detected_notes: list[Note],
+        staff_spacing: float,
+    ) -> list[Note]:
+        if len(detected_notes) < 2:
+            return detected_notes
+
+        x_tol = max(2, int(round(staff_spacing * 1.45)))
+        y_tol = max(2, int(round(staff_spacing * 0.75)))
+
+        collapsed: list[Note] = [detected_notes[0]]
+        for note in detected_notes[1:]:
+            previous = collapsed[-1]
+            if (
+                previous.duration_class is None
+                and note.duration_class is None
+                and abs(note.center_x - previous.center_x) <= x_tol
+                and abs(note.center_y - previous.center_y) <= y_tol
+                and abs(note.step - previous.step) <= 1
+            ):
+                merged_center_x = int(round((previous.center_x + note.center_x) / 2.0))
+                merged_center_y = int(round((previous.center_y + note.center_y) / 2.0))
+                previous.center_x = merged_center_x
+                previous.center_y = merged_center_y
+                previous.step = int(round((previous.step + note.step) / 2.0))
+                previous.step_confidence = (
+                    previous.step_confidence
+                    if previous.step_confidence == "high"
+                    else note.step_confidence
+                )
+                continue
+
+            collapsed.append(note)
+
+        return collapsed
+
+    def _recover_center_from_secondary_component(
+        self,
+        *,
+        center_x: int,
+        center_y: int,
+        secondary_count: int,
+        secondary_stats: MatLike,
+        secondary_centroids: MatLike,
+        staff_spacing: float,
+        max_x: int,
+        max_y: int,
+    ) -> tuple[int, int] | None:
+        x_tol = max(2, int(round(staff_spacing * 0.95)))
+        min_h = max(6, int(round(staff_spacing * 2.0)))
+        min_area = staff_spacing * staff_spacing * 0.30
+        best_idx = -1
+        best_dx = 10**9
+
+        for component_index in range(1, secondary_count):
+            width = int(secondary_stats[component_index, cv.CC_STAT_WIDTH])
+            height = int(secondary_stats[component_index, cv.CC_STAT_HEIGHT])
+            area = float(secondary_stats[component_index, cv.CC_STAT_AREA])
+            cx = int(round(float(secondary_centroids[component_index][0])))
+
+            if height < min_h or area < min_area:
+                continue
+            if width > int(round(staff_spacing * 1.7)):
+                continue
+            dx = abs(cx - center_x)
+            if dx > x_tol:
+                continue
+            if dx < best_dx:
+                best_dx = dx
+                best_idx = component_index
+
+        if best_idx < 0:
+            return None
+
+        x = int(secondary_stats[best_idx, cv.CC_STAT_LEFT])
+        y = int(secondary_stats[best_idx, cv.CC_STAT_TOP])
+        width = int(secondary_stats[best_idx, cv.CC_STAT_WIDTH])
+        height = int(secondary_stats[best_idx, cv.CC_STAT_HEIGHT])
+        refined_x = x + width // 2
+        refined_y = y + height - int(round(staff_spacing * 0.90))
+        refined_x = max(0, min(max_x, refined_x))
+        refined_y = max(0, min(max_y, refined_y))
+        return refined_x, refined_y
 
     def _classify_duration(
         self,

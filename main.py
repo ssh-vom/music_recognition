@@ -1,6 +1,7 @@
 """Staff -> bars -> clef -> measures -> notes pipeline with tree output."""
 
 from pathlib import Path
+from statistics import median
 
 import cv2 as cv
 from cv2.typing import MatLike
@@ -11,7 +12,7 @@ from bar_detection import BarDetector
 from clef_detection import ClefDetector, ClefDetectorConfig
 from measure_splitting import MeasureDetectionConfig, MeasureSplitter
 from note_detection import NoteDetector, resolve_note_pitches
-from schema import BarLine, Clef, ClefDetection, Measure, Staff
+from schema import BarLine, Clef, ClefDetection, Measure, Note, Staff
 from score_tree import ScoreTree, build_score_tree
 from staff_detection import StaffDetector, erase_staff_for_bars, erase_staff_for_notes
 
@@ -27,7 +28,7 @@ DEFAULT_TEMPO_QPM = 120
 
 
 def main() -> None:
-    image_path = "./ode-to-joy.png"
+    image_path = "./twinkle_twinkle_little_star.png"
     raw_bgr = cv.imread(filename=image_path)
     if raw_bgr is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
@@ -230,8 +231,35 @@ def populate_tree_with_notes(score_tree: ScoreTree) -> None:
                 measure=measure_node.measure,
                 measure_index=measure_node.index,
             )
+            detected_notes = remove_left_edge_header_bleed(
+                notes=detected_notes,
+                staff=staff_node.staff,
+                measure_index=measure_node.index,
+            )
             resolve_note_pitches(detected_notes, clef)
             measure_node.notes = detected_notes
+
+
+def remove_left_edge_header_bleed(
+    notes: list[Note],
+    staff: Staff,
+    measure_index: int,
+) -> list[Note]:
+    if measure_index != 0:
+        return notes
+    if len(notes) < 3:
+        return notes
+
+    first_note = notes[0]
+    left_edge_threshold = max(2, int(round(staff.spacing * 0.40)))
+    if first_note.center_x > left_edge_threshold:
+        return notes
+
+    remaining_steps = [note.step for note in notes[1:]]
+    typical_step = median(remaining_steps)
+    if first_note.step >= typical_step + 2:
+        return notes[1:]
+    return notes
 
 
 def build_clef_log(score_tree: ScoreTree) -> str:
