@@ -9,7 +9,7 @@ from cv2.typing import MatLike
 from abc_export import write_abc_file
 from artifact_writer import ArtifactWriter
 from bar_detection import BarDetector
-from clef_detection import ClefDetector, ClefDetectorConfig
+from clef_detection import ClefDetector
 from measure_splitting import MeasureDetectionConfig, MeasureSplitter
 from note_detection import NoteDetector, resolve_note_pitches
 from schema import BarLine, Clef, ClefDetection, Measure, Note, Staff
@@ -20,7 +20,7 @@ OverlayRect = tuple[int, int, int, int]
 OverlayChoice = tuple[OverlayRect, tuple[int, int, int]] | None
 
 SHOW_WINDOWS = True
-DEFAULT_TITLE = "Twinkle Twinkle Little Star"
+DEFAULT_TITLE = "Sheet Music"
 DEFAULT_METER = "4/4"
 DEFAULT_UNIT_NOTE_LENGTH = "1/4"
 DEFAULT_KEY = "C"
@@ -28,7 +28,7 @@ DEFAULT_TEMPO_QPM = 120
 
 
 def main() -> None:
-    image_path = "./twinkle_twinkle_little_star.png"
+    image_path = "./music_sheets/twinkle_twinkle_little_star.png"
     raw_bgr = cv.imread(filename=image_path)
     if raw_bgr is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
@@ -185,7 +185,7 @@ def detect_clefs(
     clef_key_crops: dict[int, MatLike],
     clefs_by_staff: dict[int, Clef],
 ) -> dict[int, ClefDetection]:
-    detector = ClefDetector(ClefDetectorConfig())
+    detector = ClefDetector()
     detections: dict[int, ClefDetection] = {}
     for staff_index, crop in clef_key_crops.items():
         detection = detector.detect(crop)
@@ -201,10 +201,9 @@ def extract_measure_crops(
     bars: list[BarLine],
     staff_detector: StaffDetector,
 ) -> tuple[dict[int, list[Measure]], dict[int, list[MatLike]]]:
-    measure_config = MeasureDetectionConfig(
-        left_header_spacings=5.2,
-        first_staff_conservative_spacings=7.0,
-    )
+    measure_config = MeasureDetectionConfig()
+    measure_config.left_header_spacings = 5.2
+    measure_config.first_staff_conservative_spacings = 7.0
     splitter = MeasureSplitter(
         bars=bars,
         staffs=staffs,
@@ -226,7 +225,7 @@ def populate_tree_with_notes(score_tree: ScoreTree) -> None:
             if measure_node.crop is None:
                 continue
             detected_notes = note_detector.detect(
-                cleaned_measure_mask=measure_node.crop,
+                mask=measure_node.crop,
                 staff=staff_node.staff,
                 measure=measure_node.measure,
                 measure_index=measure_node.index,
@@ -421,7 +420,9 @@ def draw_notes_overlay(
             for note in measure_node.notes:
                 abs_x = measure.x_start + note.center_x
                 abs_y = measure.y_top + note.center_y
-                color = confidence_color.get(note.step_confidence, (160, 160, 160))
+                color = confidence_color.get(
+                    note.step_confidence or "unknown", (160, 160, 160)
+                )
                 cv.circle(out, (abs_x, abs_y), 4, color, 2)
                 pitch_label = (
                     f"{note.pitch_letter}{note.octave}"

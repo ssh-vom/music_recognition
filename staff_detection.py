@@ -16,7 +16,6 @@ from dataclasses import dataclass
 
 import cv2 as cv
 import numpy as np
-from cv2.typing import MatLike
 
 from constants import MASK_OFF, MASK_ON
 from schema import Staff, StaffLine
@@ -24,24 +23,36 @@ from schema import Staff, StaffLine
 
 @dataclass(frozen=True)
 class StaffDetectionConfig:
-    gaussian_blur_kernel: tuple[int, int] = (5, 5)
-    horizontal_kernel_min_width: int = 25
-    horizontal_kernel_width_divisor: int = 12
-    row_cluster_max_gap_px: int = 1
-    min_row_strength_ratio: float = 0.35
-    line_extent_half_window_px: int = 1
-    staff_line_count: int = 5
-    staff_gap_tolerance_ratio: float = 0.35
-    min_staff_gap_tolerance_px: float = 2.0
-    staff_vertical_margin_in_spacings: float = 2.0
-    removal_band_half_height_ratio: float = 0.2
-    # Vertical MORPH_CLOSE height after staff erase; 0 = off.
-    slit_repair_vertical: int = 3
-    # Narrower than removal_band_*: only these rows get slit repair (avoids filling note holes).
-    slit_repair_band_half_height_ratio: float = 0.1
+    gaussian_blur_kernel = (5, 5)
+    horizontal_kernel_min_width = 25
+    horizontal_kernel_width_divisor = 12
+    row_cluster_max_gap = 1
+    min_row_strength_ratio = 0.35
+    line_extent_half_window = 1
+    staff_line_count = 5
+    staff_gap_tolerance_ratio = 0.35
+    min_staff_gap_tolerance = 2.0
+    staff_vertical_margin_in_spacings = 2.0
+    removal_band_half_height_ratio = 0.2
+    slit_repair_vertical = 3
+    slit_repair_band_half_height_ratio = 0.1
 
 
-def _repair_slits(ink: MatLike, vertical_extent: int) -> MatLike:
+@dataclass(frozen=True)
+class StaffOverlayConfig:
+    line_color = (0, 255, 0)
+    line_thickness = 1
+    box_color = (255, 0, 0)
+    box_thickness = 1
+    label_x = 10
+    label_min_y = 15
+    label_offset_y = 5
+    label_font_scale = 0.5
+    label_color = (0, 0, 255)
+    label_thickness = 1
+
+
+def _repair_slits(ink, vertical_extent):
     """Close thin horizontal gaps in foreground using vertical MORPH_CLOSE."""
     if vertical_extent <= 0:
         return ink
@@ -50,11 +61,7 @@ def _repair_slits(ink: MatLike, vertical_extent: int) -> MatLike:
     return cv.morphologyEx(ink, cv.MORPH_CLOSE, kernel)
 
 
-def _slit_repair_band_mask(
-    shape: tuple[int, ...],
-    staffs: list[Staff],
-    config: StaffDetectionConfig,
-) -> np.ndarray:
+def _slit_repair_band_mask(shape, staffs, config):
     """255 only near detected staff line y positions (tight band)."""
     h, w = int(shape[0]), int(shape[1])
     mask = np.zeros((h, w), dtype=np.uint8)
@@ -70,18 +77,13 @@ def _slit_repair_band_mask(
     return mask
 
 
-def _blend_slit_repair(
-    original: MatLike,
-    repaired: MatLike,
-    staffs: list[Staff],
-    config: StaffDetectionConfig,
-) -> MatLike:
+def _blend_slit_repair(original, repaired, staffs, config):
     """Use repaired pixels only where band mask is set."""
     mask = _slit_repair_band_mask(original.shape, staffs, config)
     return np.where(mask > 0, repaired, original).astype(original.dtype)
 
 
-def _otsu_binary(gray: MatLike, config: StaffDetectionConfig) -> MatLike:
+def _otsu_binary(gray, config):
     blurred = cv.GaussianBlur(gray, config.gaussian_blur_kernel, 0)
     _, binary = cv.threshold(
         blurred, MASK_OFF, MASK_ON, cv.THRESH_BINARY_INV + cv.THRESH_OTSU
@@ -89,7 +91,7 @@ def _otsu_binary(gray: MatLike, config: StaffDetectionConfig) -> MatLike:
     return binary
 
 
-def _horizontal_kernel_width(image_width: int, config: StaffDetectionConfig) -> int:
+def _horizontal_kernel_width(image_width, config):
     w = max(
         config.horizontal_kernel_min_width,
         image_width // config.horizontal_kernel_width_divisor,
@@ -97,24 +99,18 @@ def _horizontal_kernel_width(image_width: int, config: StaffDetectionConfig) -> 
     return max(1, min(w, image_width))
 
 
-def _horizontal_line_mask(binary: MatLike, config: StaffDetectionConfig) -> MatLike:
+def _horizontal_line_mask(binary, config):
     kw = _horizontal_kernel_width(binary.shape[1], config)
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (kw, 1))
     return cv.morphologyEx(binary, cv.MORPH_OPEN, kernel)
 
 
-def _staff_removal_band_mask(
-    shape: tuple[int, ...],
-    staffs: list[Staff],
-    config: StaffDetectionConfig,
-) -> np.ndarray:
+def _staff_removal_band_mask(shape, staffs, config):
     """Where horizontal staff ink may be removed (around each detected staff line)."""
     h, w = int(shape[0]), int(shape[1])
     allowed = np.zeros((h, w), dtype=np.uint8)
     for staff in staffs:
-        band = max(
-            1, int(round(staff.spacing * config.removal_band_half_height_ratio))
-        )
+        band = max(1, int(round(staff.spacing * config.removal_band_half_height_ratio)))
         for line in staff.lines:
             y0 = max(0, line.y - band)
             y1 = min(h, line.y + band + 1)
@@ -124,11 +120,7 @@ def _staff_removal_band_mask(
     return allowed
 
 
-def erase_staff_for_bars(
-    binary: MatLike,
-    staffs: list[Staff],
-    config: StaffDetectionConfig,
-) -> MatLike:
+def erase_staff_for_bars(binary, staffs, config):
     """Remove staff ink using line positions from detect(); keeps vertical bar strokes."""
     horizontal = _horizontal_line_mask(binary, config)
     allowed = _staff_removal_band_mask(binary.shape, staffs, config)
@@ -139,20 +131,11 @@ def erase_staff_for_bars(
     return _blend_slit_repair(out, repaired, staffs, config)
 
 
-def erase_staff_for_notes(
-    gray: MatLike,
-    staffs: list[Staff] | None = None,
-    config: StaffDetectionConfig | None = None,
-) -> MatLike:
+def erase_staff_for_notes(gray, staffs=None, config=None):
     """Adaptive threshold, horizontal open, subtract staff lines only near detected y positions."""
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
-        inverted,
-        MASK_ON,
-        cv.ADAPTIVE_THRESH_MEAN_C,
-        cv.THRESH_BINARY,
-        15,
-        -2,
+        inverted, MASK_ON, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
     )
     h = np.copy(bw)
     k = max(1, h.shape[1] // 30)
@@ -163,59 +146,36 @@ def erase_staff_for_notes(
         out = cv.subtract(bw, cv.bitwise_and(h, allowed))
     else:
         out = cv.subtract(bw, h)
-    if (
-        staffs is None
-        or config is None
-        or config.slit_repair_vertical <= 0
-    ):
+    if staffs is None or config is None or config.slit_repair_vertical <= 0:
         return out
     repaired = _repair_slits(out, config.slit_repair_vertical)
     return _blend_slit_repair(out, repaired, staffs, config)
 
 
-@dataclass(frozen=True)
-class StaffOverlayConfig:
-    line_color: tuple[int, int, int] = (0, 255, 0)
-    line_thickness: int = 1
-    box_color: tuple[int, int, int] = (255, 0, 0)
-    box_thickness: int = 1
-    label_x: int = 10
-    label_min_y: int = 15
-    label_offset_y: int = 5
-    label_font_scale: float = 0.5
-    label_color: tuple[int, int, int] = (0, 0, 255)
-    label_thickness: int = 1
-
-
 class StaffDetector:
     """Find staves via Otsu binarization, horizontal line mask, and 5-line grouping."""
 
-    def __init__(
-        self,
-        sheet_img: MatLike,
-        config: StaffDetectionConfig | None = None,
-        overlay_config: StaffOverlayConfig | None = None,
-    ):
+    def __init__(self, sheet_img, config=None, overlay_config=None):
         self.image = sheet_img
         self.config = config or StaffDetectionConfig()
         self.overlay_config = overlay_config or StaffOverlayConfig()
 
-    def to_gray(self) -> MatLike:
+    def to_gray(self):
         if len(self.image.shape) == 2:
             return self.image.copy()
         return cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
 
-    def binarize(self, gray_image: MatLike) -> MatLike:
+    def binarize(self, gray_image):
         return _otsu_binary(gray_image, self.config)
 
-    def extract_horizontal_lines(self, binary_image: MatLike) -> MatLike:
+    def extract_horizontal_lines(self, binary_image):
         return _horizontal_line_mask(binary_image, self.config)
 
-    def _cluster_adjacent_rows(self, rows: np.ndarray) -> list[int]:
-        max_gap = self.config.row_cluster_max_gap_px
+    def _cluster_adjacent_rows(self, rows):
+        max_gap = self.config.row_cluster_max_gap
         if rows.size == 0:
             return []
-        centers: list[int] = []
+        centers = []
         start = int(rows[0])
         prev = start
         for value in rows[1:]:
@@ -229,7 +189,7 @@ class StaffDetector:
         centers.append((start + prev) // 2)
         return centers
 
-    def _row_centers_from_mask(self, line_mask: MatLike) -> list[int]:
+    def _row_centers_from_mask(self, line_mask):
         min_ratio = self.config.min_row_strength_ratio
         row_strength = np.sum(line_mask > MASK_OFF, axis=1).astype(np.float32)
         if row_strength.size == 0:
@@ -241,8 +201,8 @@ class StaffDetector:
         candidate_rows = np.flatnonzero(row_strength >= threshold)
         return self._cluster_adjacent_rows(candidate_rows)
 
-    def _line_extent(self, line_mask: MatLike, y: int) -> tuple[int, int]:
-        half = self.config.line_extent_half_window_px
+    def _line_extent(self, line_mask, y):
+        half = self.config.line_extent_half_window
         top = max(0, y - half)
         bottom = min(line_mask.shape[0], y + half + 1)
         cols = np.flatnonzero(np.any(line_mask[top:bottom, :] > MASK_OFF, axis=0))
@@ -250,8 +210,8 @@ class StaffDetector:
             return 0, line_mask.shape[1] - 1
         return int(cols[0]), int(cols[-1])
 
-    def _group_staffs(self, line_centers: list[int], line_mask: MatLike) -> list[Staff]:
-        staffs: list[Staff] = []
+    def _group_staffs(self, line_centers, line_mask):
+        staffs = []
         n = self.config.staff_line_count
         gap_count = n - 1
         i = 0
@@ -263,13 +223,13 @@ class StaffDetector:
                 i += 1
                 continue
             tolerance = max(
-                self.config.min_staff_gap_tolerance_px,
+                self.config.min_staff_gap_tolerance,
                 mean_gap * self.config.staff_gap_tolerance_ratio,
             )
             if not all(abs(g - mean_gap) <= tolerance for g in gaps):
                 i += 1
                 continue
-            lines: list[StaffLine] = []
+            lines = []
             for y in candidate:
                 x0, x1 = self._line_extent(line_mask, y)
                 lines.append(StaffLine(y=y, x_start=x0, x_end=x1))
@@ -280,7 +240,7 @@ class StaffDetector:
             i += n
         return staffs
 
-    def detect(self) -> tuple[list[Staff], MatLike, MatLike]:
+    def detect(self):
         gray = self.to_gray()
         binary = self.binarize(gray)
         line_mask = self.extract_horizontal_lines(binary)
@@ -288,7 +248,7 @@ class StaffDetector:
         staffs = self._group_staffs(centers, line_mask)
         return staffs, binary, line_mask
 
-    def draw_overlay(self, staffs: list[Staff]) -> MatLike:
+    def draw_overlay(self, staffs):
         oc = self.overlay_config
         if len(self.image.shape) == 2:
             overlay = cv.cvtColor(self.image, cv.COLOR_GRAY2BGR)
@@ -313,10 +273,7 @@ class StaffDetector:
             cv.putText(
                 overlay,
                 f"staff {idx}  spacing={staff.spacing:.1f}px",
-                (
-                    oc.label_x,
-                    max(oc.label_min_y, staff.top - oc.label_offset_y),
-                ),
+                (oc.label_x, max(oc.label_min_y, staff.top - oc.label_offset_y)),
                 cv.FONT_HERSHEY_SIMPLEX,
                 oc.label_font_scale,
                 oc.label_color,
