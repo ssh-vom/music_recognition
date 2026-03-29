@@ -367,6 +367,86 @@ class NoteDetector:
 
         return overlay
 
+    def save_intermediates(self, score_tree, artifacts) -> dict:
+        """Save all intermediate processing steps for visualization."""
+        paths = {}
+
+        # 01: Input mask (notes mask - staff erased, inverted for display)
+        if score_tree.notes_mask is not None:
+            notes_mask_display = cv.bitwise_not(score_tree.notes_mask)
+            paths["01_notes_mask"] = artifacts.write_image(
+                artifacts.sections.masks, "01_notes_mask.jpg", notes_mask_display
+            )
+
+        # 02: Individual measure overlays
+        measure_dir = artifacts.ensure_subdir(
+            artifacts.sections.notes, "02_measure_overlays"
+        )
+        for staff_node in score_tree.staff_nodes:
+            staff_dir = measure_dir / f"staff_{staff_node.index}"
+            staff_dir.mkdir(exist_ok=True)
+            for measure_node in staff_node.measures:
+                if measure_node.crop is not None:
+                    overlay = self.draw_overlay(measure_node.crop, measure_node.notes)
+                    overlay_path = staff_dir / f"measure_{measure_node.index}.jpg"
+                    cv.imwrite(str(overlay_path), overlay)
+        paths["02_measure_overlays"] = measure_dir
+
+        # 03: Full sheet notes overlay
+        full_overlay = self._draw_full_overlay(score_tree)
+        paths["03_full_notes_overlay"] = artifacts.write_image(
+            artifacts.sections.notes, "03_full_notes_overlay.jpg", full_overlay
+        )
+
+        return paths
+
+    def _draw_full_overlay(self, score_tree):
+        """Draw notes overlay on the full sheet image."""
+        out = score_tree.sheet_image.copy()
+        font = cv.FONT_HERSHEY_SIMPLEX
+        confidence_color = {
+            "high": (0, 180, 0),
+            "medium": (0, 180, 220),
+            "low": (0, 80, 255),
+        }
+
+        for staff_node in score_tree.staff_nodes:
+            for measure_node in staff_node.measures:
+                measure = measure_node.measure
+                cv.rectangle(
+                    out,
+                    (measure.x_start, measure.y_top),
+                    (measure.x_end - 1, measure.y_bottom),
+                    (120, 120, 120),
+                    1,
+                )
+                for note in measure_node.notes:
+                    abs_x = measure.x_start + note.center_x
+                    abs_y = measure.y_top + note.center_y
+                    color = confidence_color.get(
+                        note.step_confidence or "unknown", (160, 160, 160)
+                    )
+                    cv.circle(out, (abs_x, abs_y), 4, color, 2)
+                    pitch_label = (
+                        f"{note.pitch_letter}{note.octave}"
+                        if note.pitch_letter is not None and note.octave is not None
+                        else "?"
+                    )
+                    duration_label = note.duration_class if note.duration_class else "?"
+                    label = f"{note.step} {pitch_label} {duration_label}"
+                    cv.putText(
+                        out,
+                        label,
+                        (abs_x + 5, abs_y - 5),
+                        font,
+                        0.35,
+                        color,
+                        1,
+                        cv.LINE_AA,
+                    )
+
+        return out
+
 
 def resolve_note_pitches(notes: list[Note], clef: Clef | None) -> None:
     if clef is None or clef.kind is None:

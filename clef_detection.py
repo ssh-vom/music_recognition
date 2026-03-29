@@ -188,3 +188,119 @@ class ClefDetector:
         new_w = max(1, int(round(tw * scale)))
         new_h = max(1, int(round(th * scale)))
         return cv.resize(template_gray, (new_w, new_h), interpolation=cv.INTER_AREA)
+
+    def draw_overlay(self, clef_crop, detection, clef):
+        """Draw clef detection overlay on the clef crop image."""
+        if len(clef_crop.shape) == 2:
+            overlay = cv.cvtColor(cv.bitwise_not(clef_crop), cv.COLOR_GRAY2BGR)
+        else:
+            overlay = clef_crop.copy()
+
+        if clef is None or detection is None:
+            return overlay
+
+        # Draw clef bounding box
+        x1, y1 = 0, 0
+        x2, y2 = overlay.shape[1], overlay.shape[0]
+        cv.rectangle(overlay, (x1, y1), (x2, y2), (100, 100, 100), 1)
+
+        # Draw template matching boxes
+        choice = self._choose_overlay_rect(clef, detection)
+        if choice is not None:
+            rect, color = choice
+            self._draw_box(overlay, rect, color, thickness=3)
+
+        # Add label
+        name = clef.kind if clef.kind else "?"
+        label = f"{name}  T={detection.letter_score_treble:.2f} B={detection.letter_score_bass:.2f}"
+        cv.putText(
+            overlay,
+            label,
+            (6, 22),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (30, 30, 30),
+            2,
+            cv.LINE_AA,
+        )
+
+        return overlay
+
+    @staticmethod
+    def _choose_overlay_rect(clef, detection):
+        """Choose which template match box to draw."""
+        if (
+            clef.kind == "treble"
+            and detection.treble_match_top_left is not None
+            and detection.treble_match_size is not None
+        ):
+            x, y = detection.treble_match_top_left
+            w, h = detection.treble_match_size
+            return (x, y, w, h), (0, 200, 100)
+        if (
+            clef.kind == "bass"
+            and detection.bass_match_top_left is not None
+            and detection.bass_match_size is not None
+        ):
+            x, y = detection.bass_match_top_left
+            w, h = detection.bass_match_size
+            return (x, y, w, h), (0, 120, 255)
+        if (
+            detection.treble_match_top_left is not None
+            and detection.treble_match_size is not None
+        ):
+            x, y = detection.treble_match_top_left
+            w, h = detection.treble_match_size
+            return (x, y, w, h), (180, 180, 180)
+        return None
+
+    @staticmethod
+    def _draw_box(image, rect, color, *, thickness=3):
+        """Draw a rectangle on the image."""
+        x, y, w, h = rect
+        if w < 2 or h < 2:
+            return
+        cv.rectangle(
+            image,
+            (x, y),
+            (x + w - 1, y + h - 1),
+            color,
+            thickness,
+        )
+
+    def save_intermediates(
+        self, clef_key_crops, clefs_by_staff, clef_detections, artifacts
+    ) -> dict:
+        """Save all intermediate processing steps for visualization."""
+        paths = {}
+
+        # Save individual clef header crops
+        clef_crops_dir = artifacts.ensure_subdir(
+            artifacts.sections.clef, "01_clef_header_crops"
+        )
+        for staff_index, crop in clef_key_crops.items():
+            crop_path = clef_crops_dir / f"staff_{staff_index}.jpg"
+            if len(crop.shape) == 2:
+                display_crop = cv.bitwise_not(crop)
+            else:
+                display_crop = crop
+            cv.imwrite(str(crop_path), display_crop)
+        paths["01_clef_header_crops"] = clef_crops_dir
+
+        # Save detection results with overlays
+        for staff_index, crop in clef_key_crops.items():
+            clef = clefs_by_staff.get(staff_index)
+            detection = clef_detections.get(staff_index)
+            if clef is not None and detection is not None:
+                overlay = self.draw_overlay(crop, detection, clef)
+                overlay_path = artifacts.write_image(
+                    artifacts.sections.clef,
+                    f"02_detection_staff_{staff_index}.jpg",
+                    overlay,
+                )
+                paths[f"02_detection_staff_{staff_index}"] = overlay_path
+
+        # Create combined clef overlay on full sheet
+        # This will be handled by pipeline.py since it needs the full sheet image
+
+        return paths

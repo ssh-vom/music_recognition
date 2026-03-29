@@ -1,11 +1,9 @@
 """Split staves into measures using barline positions; crop regions from the page."""
 
-from dataclasses import dataclass
-
 import cv2 as cv
 
 from schema import Clef, KeySignature, Measure, TimeSignature
-from staff_detection import StaffDetectionConfig, erase_staff_for_notes
+from staff_detection import erase_staff_for_notes
 
 
 class MeasureDetectionConfig:
@@ -16,14 +14,11 @@ class MeasureDetectionConfig:
 
 
 class MeasureSplitter:
-    def __init__(
-        self, bars, staffs, sheet_img, config=None, notes_image=None, staff_config=None
-    ):
+    def __init__(self, bars, staffs, sheet_img, config=None, notes_image=None):
         self.bars = bars
         self.staffs = staffs
         self.image = sheet_img
         self.config = config or MeasureDetectionConfig()
-        self.staff_config = staff_config or StaffDetectionConfig()
         self.notes_image = notes_image
 
     def _group_barlines_by_staff(self):
@@ -194,9 +189,7 @@ class MeasureSplitter:
                         if len(crop.shape) == 2
                         else cv.cvtColor(crop, cv.COLOR_BGR2GRAY)
                     )
-                    cleaned = erase_staff_for_notes(
-                        gray, staffs=self.staffs, config=self.staff_config
-                    )
+                    cleaned = erase_staff_for_notes(gray, staffs=self.staffs)
                 staff_crops.append(cleaned)
 
             crops[staff_index] = staff_crops
@@ -242,3 +235,45 @@ class MeasureSplitter:
             crop = src[clef.y_top : clef.y_bottom + 1, clef.x_start : clef.x_end]
             crops[staff_index] = crop
         return crops
+
+    def save_intermediates(
+        self, measures_map, measure_crops, sheet_image, artifacts
+    ) -> dict:
+        """Save all intermediate processing steps for visualization."""
+        import cv2 as cv
+
+        paths = {}
+
+        # 01: Measure boundaries overlay on full sheet
+        overlay = sheet_image.copy()
+        for staff_index, measures in measures_map.items():
+            for measure in measures:
+                cv.rectangle(
+                    overlay,
+                    (measure.x_start, measure.y_top),
+                    (measure.x_end - 1, measure.y_bottom),
+                    (255, 0, 0),
+                    1,
+                )
+
+        paths["01_measure_boundaries"] = artifacts.write_image(
+            artifacts.sections.pipeline, "01_measure_boundaries.jpg", overlay
+        )
+
+        # 02: Individual measure crops organized by staff
+        crops_dir = artifacts.ensure_subdir(
+            artifacts.sections.pipeline, "02_measure_crops"
+        )
+        for staff_index, crops in measure_crops.items():
+            staff_dir = crops_dir / f"staff_{staff_index}"
+            staff_dir.mkdir(exist_ok=True)
+            for measure_index, crop in enumerate(crops):
+                if len(crop.shape) == 2:
+                    crop_display = cv.bitwise_not(crop)
+                else:
+                    crop_display = crop
+                crop_path = staff_dir / f"measure_{measure_index}.jpg"
+                cv.imwrite(str(crop_path), crop_display)
+        paths["02_measure_crops"] = crops_dir
+
+        return paths

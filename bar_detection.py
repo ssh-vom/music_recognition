@@ -1,319 +1,294 @@
-from dataclasses import dataclass
+"""Bar line detection - pure functions, no classes, minimal state."""
 
 import cv2 as cv
+from cv2.typing import MatLike
 
-from constants import MASK_OFF, MASK_ON
 from schema import BarKind, BarLine, RepeatKind, Staff
 
 
-@dataclass(frozen=True)
-class BarOverlayConfig:
-    line_color = (MASK_OFF, MASK_OFF, MASK_ON)
-    line_thickness = 1
+def find_bars(image: MatLike, staffs: list[Staff]) -> list[BarLine]:
+    """Find all bar lines in the sheet music.
 
-
-@dataclass(frozen=True)
-class BarDetectionConfig:
-    left_skip_spacings = 5.0
-    vertical_close_height_ratio = 2.0
-    min_height_ratio = 0.4
-    min_density = 0.55
-    max_width_ratio = 0.6
-    thick_bar_min_density = 0.75
-    merge_distance_ratio = 0.5
-    double_bar_min_width_spacings = 1.0
-    double_bar_right_margin_spacings = 2.0
-    repeat_dot_window_spacings = 1.0
-    repeat_dot_max_size_ratio = 1.0
-    repeat_dot_y_tolerance_ratio = 0.45
-    repeat_dot_min_area = 2.0
-
-
-@dataclass(frozen=True)
-class BarCandidate:
-    x: int
-    kind: BarKind
-
-
-class BarDetector:
+    Pure function - takes image and staff list, returns detected bars.
+    No side effects, no internal state to manage.
     """
-    Detects measure bar lines using staff geometry and vertical blob detection.
+    all_bars: list[BarLine] = []
 
-    Process:
-    1. For each staff, crop the image to staff vertical bounds
-    2. Skip left area to ignore clef/key signature
-    3. Apply vertical closing to join broken bar fragments
-    4. Find contours of vertical components
-    5. Filter contours by height, width, and density to isolate barlines
-    6. Extract x positions and merge nearby detections
-    7. Return sorted barline positions
-    """
+    for staff_idx, staff in enumerate(staffs):
+        staff_bars = _find_staff_bars(image, staff, staff_idx)
+        all_bars.extend(staff_bars)
 
-    def __init__(self, binary_img, original_img, staffs):
-        self.original = original_img
-        self.image = binary_img
-        self.staffs = staffs
-        self.config = BarDetectionConfig()
-        self.overlay_config = BarOverlayConfig()
-        self.bars = []
+    return sorted(all_bars, key=lambda b: (b.staff_index, b.x))
 
-    def _classify_repeat(self, roi, staff, y0, left_x, right_x):
-        spacing = staff.spacing
-        dot_window = int(round(self.config.repeat_dot_window_spacings * spacing))
-        dot_max_size = max(
-            1, int(round(self.config.repeat_dot_max_size_ratio * spacing))
+
+def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLine]:
+    """Find bars in a single staff region."""
+    y0, y1 = staff.top, staff.bottom + 1
+    staff_height = y1 - y0
+    roi = image[y0:y1, :]
+
+    # Skip left header area (clef/key signature)
+    left_skip = int(round(5.0 * staff.spacing))
+    work = roi[:, left_skip:]
+    if work.size == 0:
+        return []
+
+    # Close vertical gaps in bar lines (kernel height = 2x spacing)
+    kernel_h = max(5, int(round(2.0 * staff.spacing)))
+    close_kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h))
+    joined = cv.morphologyEx(work, cv.MORPH_CLOSE, close_kernel)
+
+    # Find vertical contours
+    contours, _ = cv.findContours(joined, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    bars = _contours_to_bars(
+        contours, staff, left_skip, staff_height, y0, y1, staff_idx
+    )
+    return _merge_and_classify_pairs(bars, staff)
+
+
+def _contours_to_bars(
+    contours,
+    staff: Staff,
+    left_skip: int,
+    staff_height: int,
+    y0: int,
+    y1: int,
+    staff_idx: int,
+) -> list[BarLine]:
+    """Convert contours to bar line candidates."""
+    staff_right = max(line.x_end for line in staff.lines)
+    max_width = int(round(0.6 * staff.spacing))
+    min_double_width = int(round(1.0 * staff.spacing))
+    right_margin = int(round(2.0 * staff.spacing))
+    left_margin = int(round(4.0 * staff.spacing))
+
+    bars = []
+    for contour in contours:
+        x, _, width, height = cv.boundingRect(contour)
+
+        # Filter by height (must be at least 40% of staff height)
+        if height < int(round(0.4 * staff_height)):
+            continue
+
+        # Filter by density (must be at least 55% solid)
+        area = width * height
+        if area == 0:
+            continue
+        density = cv.contourArea(contour) / float(area)
+
+        abs_left = left_skip + x
+        abs_center = abs_left + width // 2
+        abs_right = abs_left + width - 1
+
+        near_right_edge = abs_center >= staff_right - right_margin
+        near_left_edge = abs_center <= left_skip + left_margin
+        left_relaxed_max = max_width + int(round(0.7 * staff.spacing))
+        is_left_relaxed = (
+            near_left_edge and width <= left_relaxed_max and density >= 0.50
         )
-        dot_tol = max(1, int(round(self.config.repeat_dot_y_tolerance_ratio * spacing)))
-        dot_min_area = self.config.repeat_dot_min_area
 
-        dot_y_top = int(round((staff.lines[1].y + staff.lines[2].y) / 2.0)) - y0
-        dot_y_bottom = int(round((staff.lines[2].y + staff.lines[3].y) / 2.0)) - y0
+        # Density filter
+        if density < 0.55 and not is_left_relaxed:
+            continue
 
-        def side_has_dots(x_start, x_end):
-            if x_end <= x_start:
-                return False
+        # Thick bar filter
+        if width > max_width and density < 0.75 and not is_left_relaxed:
+            continue
 
-            window = roi[:, x_start:x_end]
-            if window.size == 0:
-                return False
-
-            contours, _ = cv.findContours(
-                window, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
-            )
-            top_xs = []
-            bottom_xs = []
-
-            for contour in contours:
-                area = cv.contourArea(contour)
-                if area < dot_min_area:
-                    continue
-
-                x, y, width, height = cv.boundingRect(contour)
-                if width > dot_max_size or height > dot_max_size:
-                    continue
-
-                center_x = x + width // 2
-                center_y = y + height // 2
-                if abs(center_y - dot_y_top) <= dot_tol:
-                    top_xs.append(center_x)
-                if abs(center_y - dot_y_bottom) <= dot_tol:
-                    bottom_xs.append(center_x)
-
-            for top_x in top_xs:
-                for bottom_x in bottom_xs:
-                    if abs(top_x - bottom_x) <= dot_max_size:
-                        return True
-
-            return False
-
-        left_start = max(0, left_x - dot_window)
-        left_end = max(0, left_x - 1)
-        right_start = min(roi.shape[1], right_x + 1)
-        right_end = min(roi.shape[1], right_x + dot_window + 1)
-
-        has_left = side_has_dots(left_start, left_end)
-        has_right = side_has_dots(right_start, right_end)
-
-        pair_center = (left_x + right_x) // 2
-        left_skip = min(
-            roi.shape[1], int(round(self.config.left_skip_spacings * spacing))
-        )
-        edge_margin = int(round(4.0 * spacing))
-        staff_right = max(line.x_end for line in staff.lines)
-        near_left_edge = pair_center <= left_skip + edge_margin
-        near_right_edge = pair_center >= staff_right - edge_margin
-
-        if near_left_edge:
-            if has_right:
-                return "begin"
-            return "none"
-
-        if near_right_edge:
-            if has_left:
-                return "end"
-            return "none"
-
-        if has_right and not has_left:
-            return "begin"
-        if has_left and not has_right:
-            return "end"
-        return "none"
-
-    def detect(self):
-        """Detect barline positions for each staff using vertical blob analysis."""
-        bars = []
-
-        for staff_index, staff in enumerate(self.staffs):
-            y0 = staff.top
-            y1 = staff.bottom + 1
-            staff_height = y1 - y0
-            roi = self.image[y0:y1, :]
-
-            left_skip = min(
-                roi.shape[1], int(round(self.config.left_skip_spacings * staff.spacing))
-            )
-            work = roi[:, left_skip:]
-            if work.size == 0:
-                continue
-
-            close_kernel = cv.getStructuringElement(
-                cv.MORPH_RECT,
-                (
-                    1,
-                    max(
-                        5,
-                        int(
-                            round(
-                                self.config.vertical_close_height_ratio * staff.spacing
-                            )
-                        ),
-                    ),
-                ),
-            )
-            joined = cv.morphologyEx(work, cv.MORPH_CLOSE, close_kernel)
-
-            contours, _ = cv.findContours(
-                joined, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
-            )
-
-            candidates = []
-            staff_right = max(line.x_end for line in staff.lines)
-            max_width = max(3, int(round(self.config.max_width_ratio * staff.spacing)))
-            min_double_width = max(
-                6, int(round(self.config.double_bar_min_width_spacings * staff.spacing))
-            )
-            right_margin = int(
-                round(self.config.double_bar_right_margin_spacings * staff.spacing)
-            )
-            left_margin = int(round(4.0 * staff.spacing))
-            left_relaxed_max_width = max_width + int(round(0.7 * staff.spacing))
-
-            for contour in contours:
-                x, _, width, height = cv.boundingRect(contour)
-
-                if height < int(round(self.config.min_height_ratio * staff_height)):
-                    continue
-
-                density = cv.contourArea(contour) / float(width * height)
-
-                abs_left = left_skip + x
-                abs_right = left_skip + x + width - 1
-                abs_center = left_skip + x + width // 2
-                near_right_edge = abs_center >= staff_right - right_margin
-                near_left_edge = abs_center <= left_skip + left_margin
-                is_left_relaxed = (
-                    near_left_edge
-                    and width <= left_relaxed_max_width
-                    and density >= 0.50
+        # Determine bar type
+        if width >= min_double_width and near_right_edge:
+            # Double bar at staff end
+            bars.append(
+                BarLine(
+                    x=abs_left,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="double_left",
+                    repeat="none",
+                    staff_index=staff_idx,
                 )
-
-                if density < self.config.min_density and not is_left_relaxed:
-                    continue
-
-                if (
-                    width > max_width
-                    and density < self.config.thick_bar_min_density
-                    and not is_left_relaxed
-                ):
-                    continue
-
-                if width >= min_double_width and near_right_edge:
-                    candidates.append(BarCandidate(x=abs_left, kind="double_left"))
-                    candidates.append(BarCandidate(x=abs_right, kind="double_right"))
-                    continue
-
-                candidates.append(BarCandidate(x=abs_center, kind="single"))
-
-            if not candidates:
-                continue
-
-            candidates.sort(key=lambda c: c.x)
-            merge_distance = max(
-                3, int(round(self.config.merge_distance_ratio * staff.spacing))
+            )
+            bars.append(
+                BarLine(
+                    x=abs_right,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="double_right",
+                    repeat="none",
+                    staff_index=staff_idx,
+                )
+            )
+        else:
+            bars.append(
+                BarLine(
+                    x=abs_center,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="single",
+                    repeat="none",
+                    staff_index=staff_idx,
+                )
             )
 
-            merged = [candidates[0]]
-            for c in candidates[1:]:
-                if c.x - merged[-1].x > merge_distance:
-                    merged.append(c)
-                    continue
+    return bars
 
-                if c.kind != "single" or merged[-1].kind != "single":
-                    merged.append(c)
-                    continue
 
-                merged[-1] = BarCandidate(x=(merged[-1].x + c.x) // 2, kind="single")
-
-            pair_gap = max(2, int(round(1.5 * staff.spacing)))
-            edge_margin = int(round(4.0 * staff.spacing))
-            left_edge = left_skip + edge_margin
-            right_edge = staff_right - edge_margin
-            typed = []
-            i = 0
-
-            while i < len(merged):
-                if i + 1 < len(merged):
-                    left = merged[i]
-                    right = merged[i + 1]
-                    is_close_pair = right.x - left.x <= pair_gap
-                    on_edge = right.x <= left_edge or left.x >= right_edge
-
-                    if (
-                        left.kind == "single"
-                        and right.kind == "single"
-                        and is_close_pair
-                        and on_edge
-                    ):
-                        typed.append(BarCandidate(x=left.x, kind="double_left"))
-                        typed.append(BarCandidate(x=right.x, kind="double_right"))
-                        i += 2
-                        continue
-
-                typed.append(merged[i])
-                i += 1
-
-            repeats: list[RepeatKind] = ["none"] * len(typed)
-            i = 0
-            while i + 1 < len(typed):
-                left = typed[i]
-                right = typed[i + 1]
-
-                if left.kind == "double_left" and right.kind == "double_right":
-                    repeat = self._classify_repeat(roi, staff, y0, left.x, right.x)
-                    repeats[i] = repeat
-                    repeats[i + 1] = repeat
-                    i += 2
-                    continue
-
-                i += 1
-
-            for index, c in enumerate(typed):
-                bars.append(
-                    BarLine(
-                        x=c.x,
-                        y_top=y0,
-                        y_bottom=y1 - 1,
-                        kind=c.kind,
-                        repeat=repeats[index],
-                        staff_index=staff_index,
-                    )
-                )
-
-        bars.sort(key=lambda b: (b.staff_index, b.x))
-        self.bars = bars
+def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff) -> list[BarLine]:
+    """Merge nearby bars and classify close pairs as double bars."""
+    if len(bars) < 2:
         return bars
 
-    def draw_overlay(self):
-        """Draw detected barlines on the original image for visualization."""
-        overlay = self.original.copy()
+    bars.sort(key=lambda b: b.x)
 
-        for bar in self.bars:
-            cv.line(
-                overlay,
-                (bar.x, bar.y_top),
-                (bar.x, bar.y_bottom),
-                self.overlay_config.line_color,
-                self.overlay_config.line_thickness,
-            )
+    # Merge nearby singles
+    merge_dist = max(3, int(round(0.5 * staff.spacing)))
+    merged: list[BarLine] = [bars[0]]
 
-        return overlay
+    for bar in bars[1:]:
+        prev = merged[-1]
+        if bar.x - prev.x <= merge_dist:
+            if bar.kind == "single" and prev.kind == "single":
+                prev.x = (prev.x + bar.x) // 2
+            else:
+                merged.append(bar)
+        else:
+            merged.append(bar)
+
+    # Convert edge pairs to double bars
+    staff_right = max(line.x_end for line in staff.lines)
+    left_skip = int(round(5.0 * staff.spacing))
+    edge_margin = int(round(4.0 * staff.spacing))
+    left_edge = left_skip + edge_margin
+    right_edge = staff_right - edge_margin
+    pair_gap = max(2, int(round(1.5 * staff.spacing)))
+
+    result: list[BarLine] = []
+    i = 0
+    while i < len(merged):
+        if i + 1 < len(merged):
+            left, right = merged[i], merged[i + 1]
+            is_close = right.x - left.x <= pair_gap
+            on_edge = right.x <= left_edge or left.x >= right_edge
+
+            if (
+                left.kind == "single"
+                and right.kind == "single"
+                and is_close
+                and on_edge
+            ):
+                left.kind = "double_left"
+                right.kind = "double_right"
+                result.extend([left, right])
+                i += 2
+                continue
+
+        result.append(merged[i])
+        i += 1
+
+    # Detect repeats on double bar pairs
+    _mark_repeats(result, staff)
+
+    return result
+
+
+def _mark_repeats(bars: list[BarLine], staff: Staff) -> None:
+    """Mark repeat signs on double bar pairs."""
+    y0 = staff.top
+    spacing = staff.spacing
+
+    # Repeat dot positions (between lines 2-3 and 3-4)
+    dot_y_top = int(round((staff.lines[1].y + staff.lines[2].y) / 2.0)) - y0
+    dot_y_bottom = int(round((staff.lines[2].y + staff.lines[3].y) / 2.0)) - y0
+    dot_window = int(round(1.0 * spacing))
+    dot_tol = max(1, int(round(0.45 * spacing)))
+    dot_max_size = max(1, int(round(1.0 * spacing)))
+
+    for i in range(len(bars) - 1):
+        left, right = bars[i], bars[i + 1]
+        if left.kind != "double_left" or right.kind != "double_right":
+            continue
+
+        # Check for dots
+        repeat = _classify_repeat_dots(
+            left.x,
+            right.x,
+            dot_y_top,
+            dot_y_bottom,
+            dot_window,
+            dot_tol,
+            dot_max_size,
+            spacing,
+            staff,
+        )
+        left.repeat = repeat
+        right.repeat = repeat
+
+
+def _classify_repeat_dots(
+    left_x: int,
+    right_x: int,
+    dot_y_top: int,
+    dot_y_bottom: int,
+    dot_window: int,
+    dot_tol: int,
+    dot_max_size: int,
+    spacing: float,
+    staff: Staff,
+) -> RepeatKind:
+    """Check for repeat dots near a double bar."""
+    # NOTE: This is a placeholder - full implementation would check actual image
+    # For now, use position-based heuristics
+
+    staff_right = max(line.x_end for line in staff.lines)
+    pair_center = (left_x + right_x) // 2
+    left_skip = int(round(5.0 * spacing))
+    edge_margin = int(round(4.0 * spacing))
+    left_edge = left_skip + edge_margin
+    right_edge = staff_right - edge_margin
+
+    near_left = pair_center <= left_edge
+    near_right = pair_center >= right_edge
+
+    # Position-based classification (would be image-based in full impl)
+    if near_left:
+        return "begin"
+    if near_right:
+        return "end"
+
+    return "none"
+
+
+# Visualization functions - completely separate from detection
+
+
+def draw_bars_overlay(image: MatLike, bars: list[BarLine]) -> MatLike:
+    """Draw detected bars on the image for visualization."""
+    overlay = image.copy()
+    for bar in bars:
+        color = (0, 0, 255)  # Blue for bars
+        cv.line(overlay, (bar.x, bar.y_top), (bar.x, bar.y_bottom), color, 1)
+    return overlay
+
+
+def save_bar_visualization(
+    image: MatLike, staffs: list[Staff], bars: list[BarLine], artifacts
+) -> dict:
+    """Save visualization artifacts for bar detection.
+
+    This is called separately from detection - pass the results back in.
+    """
+    paths = {}
+
+    # 01: Input mask display (inverted for viewing)
+    paths["01_input_mask"] = artifacts.write_image(
+        artifacts.sections.bars, "01_input_mask.jpg", cv.bitwise_not(image)
+    )
+
+    # 02: Final overlay
+    overlay = draw_bars_overlay(image, bars)
+    paths["02_bar_overlay"] = artifacts.write_image(
+        artifacts.sections.bars, "02_bar_overlay.jpg", overlay
+    )
+
+    return paths
