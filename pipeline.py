@@ -1,11 +1,14 @@
 """Complete sheet music processing pipeline with full visualization."""
 
+import re
 from statistics import median
 
 import cv2 as cv
+import pytesseract
 from cv2.typing import MatLike
 
 from abc_export import write_abc_file
+from accidental_detection import detect_key_signature_accidentals
 from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
 from clef_detection import detect_clef
@@ -16,7 +19,17 @@ from measure_splitting import (
     split_measures,
 )
 from note_detection import find_notes, resolve_pitches
-from schema import BarLine, Clef, ClefDetection, Measure, Note, Score, Staff
+from schema import (
+    Accidental,
+    BarLine,
+    Clef,
+    ClefDetection,
+    Measure,
+    Note,
+    Score,
+    Staff,
+    TimeSignature,
+)
 from score_tree import build_score
 from staff_detection import (
     binarize,
@@ -107,6 +120,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     clefs_by_staff, clef_key_crops = _extract_clef_crops(
         raw_bgr, notes_mask, staffs, bars
     )
+    raw_clef_key_crops = crop_clef_regions(clefs_by_staff, raw_bgr)
     clef_detections: dict[int, ClefDetection] = {}
     for staff_index, crop in clef_key_crops.items():
         detection = detect_clef(crop)
@@ -118,6 +132,20 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         clef_key_crops, clefs_by_staff, clef_detections, artifacts
     )
     print(f"  Detected clefs: {[clef.kind for clef in clefs_by_staff.values()]}")
+    header_accidentals = _detect_first_staff_header_accidentals(
+        clef_key_crops=clef_key_crops,
+        clefs_by_staff=clefs_by_staff,
+        staffs=staffs,
+        bars=bars,
+    )
+    first_staff_time_signature = _detect_first_staff_time_signature(
+        clef_key_crops=raw_clef_key_crops,
+        clefs_by_staff=clefs_by_staff,
+        staffs=staffs,
+        bars=bars,
+    )
+    if first_staff_time_signature is not None and 0 in clefs_by_staff:
+        clefs_by_staff[0].time_signature = first_staff_time_signature
 
     # Step 5: Measure Splitting
     print("Step 5: Splitting into measures...")
@@ -149,6 +177,8 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         notes_mask=notes_mask,
         bars_mask=bars_mask,
     )
+    if header_accidentals and 0 in score.clefs:
+        score.clefs[0].key_header_glyphs = header_accidentals
 
     # Step 7: Note Detection
     print("Step 7: Detecting notes...")
@@ -169,17 +199,24 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     # Step 9: Generate logs
     print("Step 9: Generating logs...")
     clef_log = _build_clef_log(score)
+    accidental_log = _build_accidental_log(score)
+    time_signature_log = _build_time_signature_log(score)
     note_log = _build_note_log(score)
-    artifacts.write_text(artifacts.sections.logs, "detections.txt", clef_log + note_log)
+    artifacts.write_text(
+        artifacts.sections.logs,
+        "detections.txt",
+        clef_log + accidental_log + time_signature_log + note_log,
+    )
 
     # Step 10: Export to ABC notation
     print("Step 10: Exporting to ABC notation...")
     abc_path = artifacts.text_path(artifacts.sections.export, "output.abc")
+    meter = _meter_from_score(score)
     write_abc_file(
         score_tree=score,  # Score is backward compatible with ScoreTree
         output_path=abc_path,
         title=DEFAULT_TITLE,
-        meter=DEFAULT_METER,
+        meter=meter,
         unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
         key=DEFAULT_KEY,
         tempo_qpm=DEFAULT_TEMPO_QPM,
@@ -260,6 +297,229 @@ def _extract_measures(
     )
 
     return measures_map, measure_crops
+
+
+def _detect_first_staff_header_accidentals(
+    clef_key_crops: dict[int, MatLike],
+    clefs_by_staff: dict[int, Clef],
+    staffs: list[Staff],
+    bars: list[BarLine],
+) -> list[Accidental]:
+    """Detect header sharps/flats only for first staff."""
+    if not staffs:
+        return []
+
+    first_staff_index = 0
+    crop = clef_key_crops.get(first_staff_index)
+    clef = clefs_by_staff.get(first_staff_index)
+    if crop is None or clef is None:
+        return []
+
+    try:
+        accidentals = detect_key_signature_accidentals(
+            clef_key_crop=crop,
+            staff=staffs[first_staff_index],
+            staff_index=first_staff_index,
+        )
+
+        max_x = _first_barline_x_limit_for_header(
+            bars=bars,
+            clef=clef,
+            crop_width=crop.shape[1],
+            staff_spacing=staffs[first_staff_index].spacing,
+        )
+        accidentals = [glyph for glyph in accidentals if glyph.center_x <= max_x]
+        accidentals = _dedup_accidentals_by_x(
+            accidentals=accidentals,
+            x_tol=max(2, int(round(staffs[first_staff_index].spacing * 0.35))),
+        )
+        accidentals = _keep_dominant_accidental_kind(accidentals)
+        return accidentals
+    except FileNotFoundError:
+        # If templates are missing, keep pipeline usable and log no accidentals.
+        return []
+
+
+def _detect_first_staff_time_signature(
+    clef_key_crops: dict[int, MatLike],
+    clefs_by_staff: dict[int, Clef],
+    staffs: list[Staff],
+    bars: list[BarLine],
+) -> TimeSignature | None:
+    """Detect the first staff time signature with pytesseract OCR."""
+    if not staffs:
+        return None
+
+    first_staff_index = 0
+    crop = clef_key_crops.get(first_staff_index)
+    clef = clefs_by_staff.get(first_staff_index)
+    if crop is None or clef is None or crop.size == 0:
+        return None
+
+    max_x = _first_barline_x_limit_for_header(
+        bars=bars,
+        clef=clef,
+        crop_width=crop.shape[1],
+        staff_spacing=staffs[first_staff_index].spacing,
+    )
+    time_roi = _time_signature_roi(
+        crop=crop,
+        max_x=max_x,
+        staff_spacing=staffs[first_staff_index].spacing,
+    )
+    if time_roi is None:
+        return None
+
+    try:
+        return _ocr_time_signature(time_roi)
+    except pytesseract.TesseractNotFoundError:
+        return None
+
+
+def _time_signature_roi(
+    crop: MatLike,
+    max_x: int,
+    staff_spacing: float,
+) -> MatLike | None:
+    """Build a simple OCR ROI in the right side of the first-staff header."""
+    if crop.size == 0:
+        return None
+
+    x_start = max(0, int(round(crop.shape[1] * 0.40)))
+    x_end = min(crop.shape[1], max_x + 1)
+    if x_end - x_start < max(6, int(round(staff_spacing * 0.8))):
+        return None
+
+    roi = crop[:, x_start:x_end]
+    if roi.size == 0:
+        return None
+    return roi
+
+
+def _ocr_time_signature(time_roi: MatLike) -> TimeSignature | None:
+    """Read numerator/denominator from a stacked time-signature ROI."""
+    prepared = _prepare_time_signature_for_ocr(time_roi)
+    if prepared.size == 0:
+        return None
+
+    top_half, bottom_half = _split_time_signature_halves(prepared)
+    top_number = _ocr_single_number(top_half)
+    bottom_number = _ocr_single_number(bottom_half)
+    if top_number is not None and bottom_number is not None:
+        return TimeSignature(numerator=top_number, denominator=bottom_number)
+
+    tokens = _ocr_number_tokens(prepared, psm=6)
+    if len(tokens) == 2:
+        return TimeSignature(numerator=tokens[0], denominator=tokens[1])
+
+    if _looks_like_common_time(time_roi):
+        return TimeSignature(numerator=4, denominator=4)
+
+    return None
+
+
+def _prepare_time_signature_for_ocr(time_roi: MatLike) -> MatLike:
+    """Convert header ROI into a simple black-on-white OCR image."""
+    gray = to_gray(time_roi)
+    scaled = cv.resize(gray, None, fx=10.0, fy=10.0, interpolation=cv.INTER_CUBIC)
+    _, thresholded = cv.threshold(
+        scaled, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU
+    )
+    return cv.copyMakeBorder(
+        thresholded, 8, 8, 8, 8, cv.BORDER_CONSTANT, value=255
+    )
+
+
+def _split_time_signature_halves(image: MatLike) -> tuple[MatLike, MatLike]:
+    """Split OCR image into numerator and denominator halves."""
+    mid = image.shape[0] // 2
+    top = image[:mid, :]
+    bottom = image[mid:, :]
+    return top, bottom
+
+
+def _ocr_single_number(image: MatLike) -> int | None:
+    """Read a single integer from an OCR region."""
+    tokens = _ocr_number_tokens(image, psm=10)
+    if len(tokens) == 1:
+        return tokens[0]
+    return None
+
+
+def _ocr_number_tokens(image: MatLike, psm: int) -> list[int]:
+    """Extract integer tokens from pytesseract output."""
+    if image.size == 0:
+        return []
+
+    config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist=0123456789"
+    text = pytesseract.image_to_string(image, config=config)
+    return [int(token) for token in re.findall(r"\d+", text)]
+
+
+def _looks_like_common_time(time_roi: MatLike) -> bool:
+    """Detect common-time symbol C with a simple OCR pass."""
+    gray = to_gray(time_roi)
+    scaled = cv.resize(gray, None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC)
+
+    config = "--oem 3 --psm 8 -c tessedit_char_whitelist=Cc"
+    text = pytesseract.image_to_string(scaled, config=config).strip().lower()
+    return text == "c"
+
+
+def _first_barline_x_limit_for_header(
+    bars: list[BarLine],
+    clef: Clef,
+    crop_width: int,
+    staff_spacing: float,
+) -> int:
+    """Get crop-local x limit for header search, bounded by first barline."""
+    staff_bars = sorted(
+        [bar for bar in bars if bar.staff_index == clef.staff_index], key=lambda bar: bar.x
+    )
+    if not staff_bars:
+        return max(0, crop_width - 1)
+
+    margin = max(1, int(round(staff_spacing * 0.2)))
+    first_bar_x = staff_bars[0].x
+    max_x = first_bar_x - clef.x_start - margin
+    return max(0, min(crop_width - 1, max_x))
+
+
+def _dedup_accidentals_by_x(accidentals: list[Accidental], x_tol: int) -> list[Accidental]:
+    """Keep highest-confidence glyph per nearby x-cluster."""
+    if len(accidentals) < 2:
+        return accidentals
+
+    by_conf = sorted(accidentals, key=lambda glyph: glyph.confidence, reverse=True)
+    kept: list[Accidental] = []
+
+    for glyph in by_conf:
+        if any(abs(glyph.center_x - other.center_x) <= x_tol for other in kept):
+            continue
+        kept.append(glyph)
+
+    kept.sort(key=lambda glyph: glyph.center_x)
+    return kept
+
+
+def _keep_dominant_accidental_kind(accidentals: list[Accidental]) -> list[Accidental]:
+    """Keep only the dominant accidental family (sharp or flat)."""
+    if len(accidentals) < 2:
+        return accidentals
+
+    stats = {"sharp": [0, 0.0], "flat": [0, 0.0]}
+    for glyph in accidentals:
+        stats[glyph.kind][0] += 1
+        stats[glyph.kind][1] += glyph.confidence
+
+    if stats["sharp"][0] > stats["flat"][0]:
+        dominant = "sharp"
+    elif stats["flat"][0] > stats["sharp"][0]:
+        dominant = "flat"
+    else:
+        dominant = "sharp" if stats["sharp"][1] >= stats["flat"][1] else "flat"
+
+    return [glyph for glyph in accidentals if glyph.kind == dominant]
 
 
 def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
@@ -447,6 +707,61 @@ def _build_clef_log(score: Score) -> str:
             f"slide T/B={detection.slide_score_treble:.3f}/{detection.slide_score_bass:.3f}\n"
         )
     return "".join(lines)
+
+
+def _build_accidental_log(score: Score) -> str:
+    """Build log string for first-staff header accidental counts."""
+    clef = score.clefs.get(0)
+    if clef is None:
+        return "staff 0 header accidentals: sharps=0 flats=0 total=0\n"
+
+    glyphs = clef.key_header_glyphs
+    sharp_count = sum(1 for glyph in glyphs if glyph.kind == "sharp")
+    flat_count = sum(1 for glyph in glyphs if glyph.kind == "flat")
+
+    lines = [
+        f"staff 0 header accidentals: sharps={sharp_count} flats={flat_count} total={len(glyphs)}\n"
+    ]
+    for glyph in glyphs:
+        lines.append(
+            f"  kind={glyph.kind:<5} x={glyph.center_x:>4}, y={glyph.center_y:>4}, conf={glyph.confidence:.3f}\n"
+        )
+    return "".join(lines)
+
+
+def _build_time_signature_log(score: Score) -> str:
+    """Build log string for first-staff time signature."""
+    clef = score.clefs.get(0)
+    if clef is None:
+        return "staff 0 time signature: ?\n"
+
+    time_signature = clef.time_signature
+    if (
+        time_signature.numerator is None
+        or time_signature.denominator is None
+    ):
+        return "staff 0 time signature: ?\n"
+
+    return (
+        f"staff 0 time signature: "
+        f"{time_signature.numerator}/{time_signature.denominator}\n"
+    )
+
+
+def _meter_from_score(score: Score) -> str:
+    """Build ABC meter from detected first-staff time signature."""
+    clef = score.clefs.get(0)
+    if clef is None:
+        return DEFAULT_METER
+
+    time_signature = clef.time_signature
+    if (
+        time_signature.numerator is None
+        or time_signature.denominator is None
+    ):
+        return DEFAULT_METER
+
+    return f"{time_signature.numerator}/{time_signature.denominator}"
 
 
 def _build_note_log(score: Score) -> str:
