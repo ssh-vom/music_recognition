@@ -1,28 +1,20 @@
-"""Accidental detection (sharp/flat) via template matching.
-
-Detects sharps and flats in measures and key signatures using OpenCV matchTemplate.
-"""
+"""Accidental detection (sharp/flat) via template matching."""
 
 from pathlib import Path
 
 import cv2 as cv
-import numpy as np
 from cv2.typing import MatLike
 
-from schema import Accidental, AccidentalKind
+from schema import Accidental
 from symbol_templates import ACCIDENTAL_FLAT, ACCIDENTAL_SHARP
 
-# Template constants - loaded once at module level
 _SHARP_TEMPLATE = None
 _FLAT_TEMPLATE = None
 
-# Detection thresholds (as ratios for scale invariance)
-MATCH_THRESHOLD = 0.5  # Minimum correlation score to accept a match
-SCALE_FRACTIONS = (0.35, 0.5, 0.65, 0.8)  # Template scales to test
-MIN_PEAK_DISTANCE_FRAC = 0.55  # Minimum distance between peaks (as fraction of spacing)
-NOTEHEAD_CLEARANCE_FRAC = (
-    0.22  # Clearance before first notehead (as fraction of spacing)
-)
+MATCH_THRESHOLD = 0.5
+SCALE_FRACTIONS = (0.35, 0.5, 0.65, 0.8)
+MIN_PEAK_DISTANCE_FRAC = 0.55
+NOTEHEAD_CLEARANCE_FRAC = 0.22
 
 
 def _load_templates() -> tuple[MatLike, MatLike]:
@@ -59,31 +51,22 @@ def detect_measure_accidentals(
     measure_index: int,
     detected_notes: list,
 ) -> list[Accidental]:
-    """Detect sharps and flats in a measure (left of first notehead).
-
-    Only searches in columns left of the first notehead, with a small margin.
-    This catches accidentals that modify the first note(s) in a measure.
-    """
-    # Find where to stop searching (before first notehead)
+    """Detect sharps and flats in a measure (left of first notehead)."""
     first_note_x = _exclusive_x_before_first_note(staff, detected_notes)
     if first_note_x is None or first_note_x < 4:
         return []
 
-    # Prepare ROI - invert so black ink on white becomes white on black
     roi = cv.bitwise_not(mask)
     if roi.size == 0:
         return []
 
-    # Limit to columns left of first note
     x_end = min(first_note_x, roi.shape[1])
     if x_end < 4:
         return []
     roi = roi[:, :x_end]
 
-    # Run template matching
     matches = _match_templates_in_roi(roi, staff.spacing)
 
-    # Convert matches to Accidental objects
     accidentals = []
     for score, cx, cy, kind in matches:
         accidentals.append(
@@ -106,42 +89,34 @@ def detect_key_signature_accidentals(
     clef_key_crop: MatLike,
     staff,
     staff_index: int,
+    x_start: int = 0,
+    x_end: int | None = None,
 ) -> list[Accidental]:
-    """Detect sharps and flats in the key signature.
-
-    Searches the key-signature strip: columns after the clef glyph,
-    within the left portion of the clef+key crop.
-    """
-    # Key signature is in left portion of crop, after the clef itself
-    CLEF_HORIZONTAL_FRAC = 0.42  # Total left portion to search
-    CLEF_STRIP_FRAC = 0.55  # Portion within left that's clef (rest is key sig)
-
-    # Prepare ROI
+    """Detect sharps and flats in the key signature."""
     roi = cv.bitwise_not(clef_key_crop)
     if roi.size == 0:
         return []
 
     width = roi.shape[1]
-    left = roi[:, : max(1, int(width * CLEF_HORIZONTAL_FRAC))]
-    lw = left.shape[1]
-    strip_end = max(1, int(lw * CLEF_STRIP_FRAC))
-    key_roi = left[:, strip_end:]
+    if x_end is None:
+        x_end = width
+    x_start = max(0, min(width, x_start))
+    x_end = max(x_start, min(width, x_end))
+    key_roi = roi[:, x_start:x_end]
 
     if key_roi.shape[1] < 4:
         return []
 
-    # Run template matching
     matches = _match_templates_in_roi(key_roi, staff.spacing)
 
-    # Convert matches to Accidental objects (adjusting for strip offset)
     accidentals = []
     for score, cx, cy, kind in matches:
         accidentals.append(
             Accidental(
                 kind=kind,
                 staff_index=staff_index,
-                measure_index=-1,  # -1 indicates key signature
-                center_x=strip_end + cx,  # Add offset to get position in crop
+                measure_index=-1,
+                center_x=x_start + cx,
                 center_y=cy,
                 confidence=score,
                 region="header",
@@ -180,11 +155,9 @@ def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
 
     sharp_template, flat_template = _load_templates()
 
-    # Minimum distance between detected peaks
     min_dist = max(4, int(round(spacing * MIN_PEAK_DISTANCE_FRAC)))
     candidates = []
 
-    # Test both accidental types at multiple scales
     for kind, template in [("sharp", sharp_template), ("flat", flat_template)]:
         for frac in SCALE_FRACTIONS:
             target_h = max(4, int(round(spacing * frac)))
@@ -195,14 +168,12 @@ def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
             if th < 3 or tw < 3:
                 continue
 
-            # Template matching
             result = cv.matchTemplate(roi, scaled, cv.TM_CCOEFF_NORMED)
             peaks = _gather_peaks(result, MATCH_THRESHOLD, min_dist, tw, th)
 
             for score, cx, cy in peaks:
                 candidates.append((score, cx, cy, kind))
 
-    # Apply non-maximum suppression
     return _nms(candidates, min_dist)
 
 

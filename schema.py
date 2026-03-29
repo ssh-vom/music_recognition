@@ -127,7 +127,7 @@ class Accidental:
 
     kind: AccidentalKind
     staff_index: int
-    measure_index: int  # -1 = key header / clef crop
+    measure_index: int
     center_x: int
     center_y: int
     confidence: float
@@ -141,46 +141,27 @@ class Note:
     kind: NoteKind
     staff_index: int
     measure_index: int
-    center_x: int  # Measure-local center
-    center_y: int  # Measure-local center
-    step: int  # Staff step (0 = bottom line, +1 = next space/line up)
+    center_x: int
+    center_y: int
+    step: int
     step_confidence: StepConfidence | None = None
-    pitch_letter: str | None = None  # e.g., "C", "F#"
+    pitch_letter: str | None = None
     octave: int | None = None
     duration_class: DurationClass | None = None
 
 
 @dataclass
 class Score:
-    """Complete sheet music analysis result - flat structure.
-
-    The old ScoreTree with nested StaffNode/MeasureNode hierarchy is now flattened:
-    - staffs: list of Staff objects (by staff_index order)
-    - measures: flat list of Measure objects (can filter by staff_index)
-    - notes: flat list of Note objects (can filter by staff_index/measure_index)
-
-    This makes it easy to:
-    - Get all notes: score.notes
-    - Get notes for staff 0: [n for n in score.notes if n.staff_index == 0]
-    - Get measures for staff 0: [m for m in score.measures if m.staff_index == 0]
-    """
+    """Complete sheet music analysis result - flat structure."""
 
     image_path: str
-    # Original sheet image
     sheet_image: MatLike
-    # All detected staves (index matches staff_index in other entities)
     staffs: list[Staff]
-    # All measures across all staves (flat list)
     measures: list[Measure]
-    # All bar lines
     bars: list[BarLine]
-    # All detected notes
     notes: list[Note]
-    # Clef info per staff (dict keyed by staff_index)
     clefs: dict[int, Clef]
-    # Clef detection metadata
     clef_detections: dict[int, ClefDetection]
-    # Processing masks for debugging
     notes_mask: MatLike | None = None
     bars_mask: MatLike | None = None
 
@@ -206,5 +187,4 @@ class Score:
         return [b for b in self.bars if b.staff_index == staff_index]
 
 
-# Keep ScoreTree alias for backward compatibility during transition
 ScoreTree = Score

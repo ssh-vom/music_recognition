@@ -1,7 +1,7 @@
 """Clef detection (treble vs bass) via template matching.
 
 Uses OpenCV matchTemplate with letterbox and multi-scale approaches.
-Based on: https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html
+https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html
 """
 
 from pathlib import Path
@@ -13,14 +13,12 @@ from cv2.typing import MatLike
 from schema import ClefDetection, ClefKind
 from symbol_templates import CLEF_BASS, CLEF_TREBLE
 
-# Template constants - loaded once at module level
 _TREBLE_TEMPLATE = None
 _BASS_TEMPLATE = None
 
-# Detection thresholds (as ratios for scale invariance)
-CLEF_HORIZONTAL_FRACTION = 0.42  # Left portion of crop to search (clef region)
-MIN_CONFIDENCE = 0.15  # Minimum match score to accept a clef detection
-LETTERBOX_TIE_MARGIN = 0.06  # Margin for preferring treble when scores are close
+CLEF_HORIZONTAL_FRACTION = 0.42
+MIN_CONFIDENCE = 0.15
+LETTERBOX_TIE_MARGIN = 0.06
 
 
 def _load_templates() -> tuple[MatLike, MatLike]:
@@ -52,10 +50,7 @@ def _to_gray(image: MatLike) -> MatLike:
 
 
 def _trim_white(gray: MatLike, white_thresh: int = 248) -> MatLike:
-    """Trim white margins from template image.
-
-    Removes padding so matching targets the glyph, not empty space.
-    """
+    """Trim white margins from template image."""
     _, inv = cv.threshold(gray, white_thresh, 255, cv.THRESH_BINARY_INV)
     pts = cv.findNonZero(inv)
     if pts is None:
@@ -67,17 +62,9 @@ def _trim_white(gray: MatLike, white_thresh: int = 248) -> MatLike:
 
 
 def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
-    """Detect treble or bass clef in a clef+key signature crop.
-
-    Uses two matching strategies:
-    1. Letterbox match: Template scaled to fit full crop height (whole glyph)
-    2. Multi-scale match: Sliding window at multiple scales (catches partial matches)
-
-    Returns ClefDetection with scores for both strategies.
-    """
+    """Detect treble or bass clef in a clef+key signature crop."""
     treble_template, bass_template = _load_templates()
 
-    # Prepare ROI - left portion of crop where clef appears
     left = _prepare_left_roi(clef_key_crop)
     if left is None:
         return ClefDetection(
@@ -93,15 +80,12 @@ def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
             bass_match_size=(0, 0),
         )
 
-    # Letterbox matching - template fits full crop height
     treble_score, treble_rect = _letterbox_match(left, treble_template)
     bass_score, bass_rect = _letterbox_match(left, bass_template)
 
-    # Multi-scale sliding window matching
     slide_treble, _ = _multi_scale_match(left, treble_template)
     slide_bass, _ = _multi_scale_match(left, bass_template)
 
-    # Decision: treble wins if within tie margin, otherwise higher score wins
     kind, confidence = _decide_clef(treble_score, bass_score)
 
     tx, ty, tw, th = treble_rect
@@ -122,13 +106,8 @@ def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
 
 
 def _prepare_left_roi(clef_key_crop: MatLike) -> MatLike | None:
-    """Extract left portion of crop where clef appears.
-
-    Uses left 42% of crop width - clef appears in left portion,
-    key signature appears to the right.
-    """
+    """Extract left portion of crop where clef appears."""
     gray = _to_gray(clef_key_crop)
-    # Invert staff-erased binary (black ink on white → white ink on black for matching)
     gray = cv.bitwise_not(gray)
 
     width = gray.shape[1]
@@ -142,11 +121,7 @@ def _prepare_left_roi(clef_key_crop: MatLike) -> MatLike | None:
 def _decide_clef(
     treble_score: float, bass_score: float
 ) -> tuple[ClefKind | None, float]:
-    """Decide clef type based on match scores.
-
-    Treble wins if: treble_score >= bass_score - tie_margin
-    This slight bias prevents flip-flopping when scores are similar.
-    """
+    """Decide clef type based on match scores."""
     if treble_score + LETTERBOX_TIE_MARGIN >= bass_score:
         winner = "treble"
         confidence = treble_score
@@ -160,19 +135,13 @@ def _decide_clef(
 
 
 def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, tuple]:
-    """Match template to ROI using letterbox approach.
-
-    Scales template to fit full ROI height while maintaining aspect ratio.
-    Template is centered vertically, placed at left edge horizontally.
-    Returns match score and rectangle (x, y, w, h) of template position.
-    """
+    """Match template to ROI using letterbox approach."""
     roi_h, roi_w = roi_gray.shape[:2]
     th, tw = template_gray.shape[:2]
 
     if th < 1 or tw < 1:
         return 0.0, (0, 0, 0, 0)
 
-    # Scale to fit height with small margin
     scale = min((roi_w - 1) / tw, (roi_h - 1) / th) * 0.99
     scale = max(scale, 1e-6)
 
@@ -185,7 +154,6 @@ def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, 
         interpolation=cv.INTER_AREA if scale < 1.0 else cv.INTER_CUBIC,
     )
 
-    # Create canvas and center template vertically, align left
     canvas = np.full((roi_h, roi_w), 255, dtype=np.uint8)
     y0 = max(0, (roi_h - new_h) // 2)
     x0 = 0
@@ -195,7 +163,6 @@ def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, 
     rh = y1 - y0
     canvas[y0:y1, x0:x1] = resized[:rh, :rw]
 
-    # Template matching with normalized correlation coefficient
     result = cv.matchTemplate(roi_gray, canvas, cv.TM_CCOEFF_NORMED)
     score = float(result[0, 0])
     rect = (x0, y0, rw, rh)
@@ -206,11 +173,7 @@ def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, 
 def _multi_scale_match(
     roi_gray: MatLike, template_gray: MatLike
 ) -> tuple[float, tuple]:
-    """Match template using sliding window at multiple scales.
-
-    Tests scales: 78%, 88%, 95%, 100% of ROI height
-    Returns best score and rectangle of best match.
-    """
+    """Match template using sliding window at multiple scales."""
     roi_h, roi_w = roi_gray.shape[:2]
     best_score = 0.0
     best_rect = (0, 0, 0, 0)

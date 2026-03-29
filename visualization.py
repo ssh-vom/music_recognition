@@ -885,10 +885,9 @@ def save_accidental_visualization(
     """
     paths = {}
 
-    if accidentals:
-        overlay = draw_accidentals_overlay(image, accidentals)
-        paths["accidentals_overlay"] = artifacts.write_image(
-            artifacts.sections.notes, "accidentals_overlay.jpg", overlay
-        )
+    overlay = draw_accidentals_overlay(image, accidentals)
+    paths["accidentals_overlay"] = artifacts.write_image(
+        artifacts.sections.notes, "accidentals_overlay.jpg", overlay
+    )
 
     return paths

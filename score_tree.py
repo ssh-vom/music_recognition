@@ -1,7 +1,4 @@
-"""Build Score object from detection results - flat data structure.
-
-Converts detection results into the simplified flat Score format.
-"""
+"""Build Score object from detection results - flat data structure."""
 
 from cv2.typing import MatLike
 
@@ -22,14 +19,7 @@ def build_score(
     notes_mask: MatLike,
     bars_mask: MatLike,
 ) -> Score:
-    """Build flat Score structure from all detection results.
-
-    Flatten the old nested hierarchy (StaffNode→MeasureNode) into:
-    - Flat list of measures (with notes stored directly)
-    - Flat list of notes
-    - Direct lookups by staff_index
-    """
-    # Group bars by staff
+    """Build flat Score structure from all detection results."""
     bars_by_staff: dict[int, list[BarLine]] = {i: [] for i in range(len(staffs))}
     for bar in bars:
         if 0 <= bar.staff_index < len(staffs):
@@ -37,7 +27,6 @@ def build_score(
     for staff_bars in bars_by_staff.values():
         staff_bars.sort(key=lambda bar: bar.x)
 
-    # Build measures list with crops and closing bars
     all_measures: list[Measure] = []
 
     for staff_index, staff in enumerate(staffs):
@@ -45,20 +34,17 @@ def build_score(
         staff_crops = measure_crops.get(staff_index, [])
         staff_bars = bars_by_staff.get(staff_index, [])
 
-        # Add crop to each measure
         for measure_index, measure in enumerate(staff_measures):
             if measure_index < len(staff_crops):
                 measure.crop = staff_crops[measure_index]
             all_measures.append(measure)
 
-        # Assign closing bars to measures
         closing_bars = _closing_bars_for_measures(staff_bars, staff_measures)
         staff_measure_list = [m for m in all_measures if m.staff_index == staff_index]
         for measure_index, measure in enumerate(staff_measure_list):
             if measure_index < len(closing_bars):
                 measure.closing_bar = closing_bars[measure_index]
 
-    # Flatten all notes from all measures
     all_notes: list[Note] = []
     for measure in all_measures:
         all_notes.extend(measure.notes)
@@ -100,7 +86,6 @@ def _closing_bars_for_measures(
     return closers[:needed]
 
 
-# Keep backward compatibility
 def build_score_tree(*args, **kwargs) -> Score:
-    """Alias for build_score - for backward compatibility."""
+    """Alias for build_score."""
     return build_score(*args, **kwargs)

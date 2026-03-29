@@ -33,31 +33,9 @@ def find_notes(
     measure_index: int,
     return_intermediates: bool = False,
 ) -> list[Note] | tuple[list[Note], dict | None]:
-    """Find all noteheads in a measure.
-
-    Process:
-    1. Morphological open to isolate notehead-shaped blobs
-    2. Connected components to find candidate blobs
-    3. Filter by size, aspect ratio, and area
-    4. Merge nearby detections
-    5. Augment from stems (if few notes detected)
-    6. Classify pitch and duration
-
-    All thresholds are expressed as ratios of staff spacing for scale invariance.
-
-    Args:
-        mask: Binary measure image
-        staff: Staff object with spacing information
-        measure: Measure object with position information
-        measure_index: Index of the measure
-        return_intermediates: If True, returns tuple of (notes, intermediates_dict)
-
-    Returns:
-        List of Note objects, or tuple of (notes, intermediates) if return_intermediates=True
-    """
+    """Find all noteheads in a measure."""
     intermediates: dict | None = {} if return_intermediates else None
-    # STEP 1: Morphological processing
-    # Kernel diameter = 45% of staff spacing - targets notehead-sized regions
+
     kernel_diameter = max(1, int(round(staff.spacing * 0.45)))
     if kernel_diameter % 2 == 0:
         kernel_diameter += 1
@@ -67,7 +45,6 @@ def find_notes(
     )
     opened_mask = cv.morphologyEx(mask, cv.MORPH_OPEN, notehead_kernel)
 
-    # Close small gaps within noteheads
     close_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (3, 3))
     notehead_mask = cv.morphologyEx(opened_mask, cv.MORPH_CLOSE, close_kernel)
     secondary_mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, close_kernel)
@@ -77,7 +54,6 @@ def find_notes(
         intermediates["notehead_mask"] = notehead_mask.copy()
         intermediates["secondary_mask"] = secondary_mask.copy()
 
-    # STEP 2: Find connected components
     count, _, stats, centroids = cv.connectedComponentsWithStats(
         notehead_mask, connectivity=8
     )
@@ -92,24 +68,12 @@ def find_notes(
             "centroids": centroids.copy(),
         }
 
-    # STEP 3: Filter candidates by geometry
-    # Area thresholds: 8% to 180% of staff spacing squared
-    # Captures noteheads while filtering noise and merged regions
     min_area = staff.spacing * staff.spacing * 0.08
     max_area = staff.spacing * staff.spacing * 1.8
-
-    # Size thresholds: 35% to 190% of staff spacing
-    # Ensures blobs are notehead-sized, not too small or large
     min_size = int(round(staff.spacing * 0.35))
     max_size = int(round(staff.spacing * 1.9))
-
-    # Aspect ratio thresholds: 0.45 to 2.2
-    # Noteheads are roughly circular (aspect near 1.0)
     min_aspect = 0.45
     max_aspect = 2.2
-
-    # Tiny notehead threshold: 22% of spacing squared
-    # These may need position refinement from secondary mask
     tiny_area = staff.spacing * staff.spacing * 0.22
 
     raw_centers = []
@@ -133,7 +97,6 @@ def find_notes(
         cx = int(round(centroids[i][0]))
         cy = int(round(centroids[i][1]))
 
-        # Refine tiny noteheads using larger secondary mask
         if area <= tiny_area:
             refined = _refine_from_secondary_mask(
                 cx,
@@ -169,9 +132,6 @@ def find_notes(
         intermediates["filtered_components"] = filtered_info
         intermediates["raw_centers_before_merge"] = raw_centers.copy()
 
-    # STEP 4: Merge nearby detections
-    # Merge distance: 75% of staff spacing
-    # Groups split noteheads or multiple detections of same note
     merge_dist = max(2, int(round(staff.spacing * 0.75)))
     raw_centers.sort(key=lambda c: c[0])
 
@@ -180,8 +140,6 @@ def find_notes(
     if intermediates is not None:
         intermediates["centers_after_merge"] = merged.copy()
 
-    # STEP 5: Augment from stems (if few notes found)
-    # Looks for tall vertical components that might be missed stems
     stem_info = {} if intermediates is not None else None
     merged = _augment_from_stems(
         mask, merged, staff.spacing, mask.shape[1], merge_dist, stem_info
@@ -191,14 +149,11 @@ def find_notes(
         intermediates["stem_augmentation"] = stem_info
         intermediates["centers_after_stems"] = merged.copy()
 
-    # STEP 6: Convert to notes with pitch and duration
     bottom_line_y = int(round(staff.lines[4].y - measure.y_top))
     half_step = staff.spacing / 2.0
 
     notes = []
     for cx, cy, _ in merged:
-        # Convert y-position to staff step
-        # step 0 = bottom line, step 1 = first space above, etc.
         step_float = (bottom_line_y - cy) / half_step
         step = _quantize_step(step_float)
         residual = abs(step_float - step)
@@ -270,13 +225,7 @@ def _quantize_step(step_float: float) -> int:
 
 
 def _step_confidence(residual: float) -> StepConfidence:
-    """Classify step detection confidence based on quantization residual.
-
-    Thresholds:
-    - high: residual <= 0.20 (very close to step line)
-    - medium: residual <= 0.40 (moderately close)
-    - low: residual > 0.40 (far from step line, ambiguous)
-    """
+    """Classify step detection confidence based on quantization residual."""
     if residual <= 0.20:
         return "high"
     if residual <= 0.40:
@@ -292,17 +241,7 @@ def _augment_from_stems(
     merge_dist: int,
     stem_info: dict | None = None,
 ) -> list:
-    """Look for missed notes by finding tall vertical components (stems).
-
-    Only runs when few notes detected (< 3).
-    Finds tall thin components and adds noteheads at their base.
-
-    Detection criteria for stem components:
-    - Height: at least 2x staff spacing
-    - Width: at most 1.5x staff spacing
-    - Area: at least 35% of spacing squared
-    - Position: not at right edge (margin = 60% of spacing)
-    """
+    """Look for missed notes by finding tall vertical components (stems)."""
     if len(centers) > 2:
         if stem_info is not None:
             stem_info["skipped"] = True
@@ -312,7 +251,6 @@ def _augment_from_stems(
     count, _, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
     augmented = [c.copy() for c in centers]
 
-    # Right edge margin to avoid page edge artifacts
     margin = max(2, int(round(spacing * 0.6)))
     added = 0
     all_stems = [] if stem_info is not None else None
@@ -327,38 +265,32 @@ def _augment_from_stems(
 
         stem_data = {"id": i, "x": x, "y": y, "w": w, "h": h, "area": area}
 
-        # Tall component check: height >= 2x spacing
         if h < int(round(spacing * 2.0)):
             stem_data["rejected"] = "too_short"
             if all_stems is not None:
                 all_stems.append(stem_data)
             continue
-        # Width check: not too wide (<= 1.5x spacing)
         if w > int(round(spacing * 1.5)):
             stem_data["rejected"] = "too_wide"
             if all_stems is not None:
                 all_stems.append(stem_data)
             continue
-        # Area check: substantial enough (>= 35% spacing^2)
         if area < spacing * spacing * 0.35:
             stem_data["rejected"] = "too_small"
             if all_stems is not None:
                 all_stems.append(stem_data)
             continue
-        # Edge check: not at right margin
         if x + w >= width - margin:
             stem_data["rejected"] = "at_edge"
             if all_stems is not None:
                 all_stems.append(stem_data)
             continue
 
-        # Place notehead at stem base, slightly above bottom
         cx = x + w // 2
         cy = y + h - max(1, int(round(spacing * 0.55)))
 
-        # Check for overlap with existing detections
         overlaps = False
-        overlap_x_dist = int(round(merge_dist * 1.2))  # 120% of merge distance
+        overlap_x_dist = int(round(merge_dist * 1.2))
         overlap_y_dist = int(round(spacing * 1.2))
 
         for ex, ey, _ in augmented:
@@ -395,16 +327,7 @@ def _augment_from_stems(
 
 
 def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
-    """Collapse duplicate notes that are spatially overlapping.
-
-    Two notes are considered duplicates if:
-    - Both have no duration class assigned (ambiguous detections)
-    - X distance <= 145% of spacing
-    - Y distance <= 75% of spacing
-    - Step difference <= 1
-
-    Duplicate notes are merged by averaging positions and steps.
-    """
+    """Collapse duplicate notes that are spatially overlapping."""
     if len(notes) < 2:
         return notes
 
@@ -425,11 +348,9 @@ def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
         )
 
         if is_duplicate:
-            # Merge by averaging
             prev.center_x = int(round((prev.center_x + note.center_x) / 2.0))
             prev.center_y = int(round((prev.center_y + note.center_y) / 2.0))
             prev.step = int(round((prev.step + note.step) / 2.0))
-            # Keep higher confidence
             prev.step_confidence = (
                 prev.step_confidence
                 if prev.step_confidence == "high"
@@ -451,17 +372,7 @@ def _refine_from_secondary_mask(
     max_x: int,
     max_y: int,
 ) -> tuple[int, int] | None:
-    """Refine notehead position using secondary (less processed) mask.
-
-    Used for tiny noteheads that may have been over-processed.
-    Looks for taller component near original position.
-
-    Matching criteria:
-    - Height: at least 2x spacing
-    - Area: at least 30% of spacing squared
-    - Width: at most 1.7x spacing
-    - X proximity: within 95% of spacing
-    """
+    """Refine notehead position using secondary (less processed) mask."""
     tol = max(2, int(round(spacing * 0.95)))
     min_h = max(6, int(round(spacing * 2.0)))
     min_area = spacing * spacing * 0.30
@@ -493,7 +404,6 @@ def _refine_from_secondary_mask(
     w = int(stats[best_idx, cv.CC_STAT_WIDTH])
     h = int(stats[best_idx, cv.CC_STAT_HEIGHT])
 
-    # Place notehead near bottom of tall component
     rx = x + w // 2
     ry = y + h - int(round(spacing * 0.90))
     rx = max(0, min(max_x, rx))
@@ -505,14 +415,7 @@ def _refine_from_secondary_mask(
 def _classify_duration(
     mask: MatLike, cx: int, cy: int, spacing: float
 ) -> DurationClass | None:
-    """Classify note duration based on filled status and stem presence.
-
-    Classification logic:
-    - whole: hollow notehead, no stem
-    - half: hollow notehead, has stem
-    - quarter: filled notehead, has stem
-    - None: filled notehead, no stem (unusual/invalid)
-    """
+    """Classify note duration based on filled status and stem presence."""
     filled = _is_filled(mask, cx, cy, spacing)
     has_stem = _has_stem(mask, cx, cy, spacing)
 
@@ -526,14 +429,7 @@ def _classify_duration(
 
 
 def _is_filled(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    """Check if notehead is filled (black) or hollow (white).
-
-    Creates elliptical ROI around notehead center and measures ink density.
-
-    Ellipse size: 36% x 28% of spacing (typical notehead proportions)
-    Filled threshold: 55% ink coverage within ellipse
-    """
-    # Elliptical region around notehead
+    """Check if notehead is filled (black) or hollow (white)."""
     rx = max(2, int(round(spacing * 0.36)))
     ry = max(2, int(round(spacing * 0.28)))
 
@@ -546,7 +442,6 @@ def _is_filled(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     if roi.size == 0:
         return False
 
-    # Create elliptical mask
     ellipse_mask = np.zeros(roi.shape, dtype=np.uint8)
     local_center = (cx - x1, cy - y1)
     cv.ellipse(
@@ -567,19 +462,11 @@ def _is_filled(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     ink = cv.countNonZero(cv.bitwise_and(roi, roi, mask=ellipse_mask))
     ink_ratio = ink / float(ellipse_area)
 
-    # Filled threshold: 55% ink coverage
     return ink_ratio >= 0.55
 
 
 def _has_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    """Check if notehead has an attached stem.
-
-    Searches for vertical line above or below notehead.
-
-    Search region: 85% horizontal, 260% vertical of spacing
-    Stem criteria: vertical run of at least 120% of spacing
-    """
-    # Search region around notehead
+    """Check if notehead has an attached stem."""
     x_radius = max(2, int(round(spacing * 0.85)))
     y_radius = max(3, int(round(spacing * 2.6)))
 
@@ -592,10 +479,8 @@ def _has_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     if roi.size == 0 or roi.shape[1] < 2:
         return False
 
-    # Minimum continuous vertical run to qualify as stem
     min_run = max(3, int(round(spacing * 1.2)))
 
-    # Check each column for vertical runs
     for x in range(roi.shape[1]):
         run = 0
         best = 0
@@ -615,14 +500,10 @@ def _has_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
 
 
 def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
-    """Resolve note steps to pitch letters and octaves based on clef.
-
-    Modifies notes in-place, setting pitch_letter and octave fields.
-    """
+    """Resolve note steps to pitch letters and octaves based on clef."""
     if clef is None or clef.kind is None:
         return
 
-    # Clef-specific base pitches
     if clef.kind == "treble":
         base_letter, base_octave = "E", 4
     elif clef.kind == "bass":
@@ -642,11 +523,7 @@ def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
 def _step_to_letter_octave(
     base_letter: str, base_octave: int, step: int
 ) -> tuple[str, int]:
-    """Convert staff step to letter and octave.
-
-    Uses base pitch (bottom staff line) and counts up by step.
-    Each step = one half-step on staff (line to space or vice versa).
-    """
+    """Convert staff step to letter and octave."""
     base_index = LETTER_TO_INDEX[base_letter]
     absolute = base_octave * 7 + base_index + step
     octave = absolute // 7
@@ -655,20 +532,14 @@ def _step_to_letter_octave(
 
 
 def _key_signature_accidentals(key_sig: KeySignature) -> dict[str, str]:
-    """Get accidentals from key signature.
-
-    Returns dict mapping note letters to accidental symbols (# or b).
-    Uses circle of fifths order for sharp/flat positions.
-    """
+    """Get accidentals from key signature."""
     accidentals = {}
     fifths = key_sig.fifths if key_sig.fifths is not None else 0
 
     if fifths > 0:
-        # Sharps: F, C, G, D, A, E, B order
         for letter in SHARP_ORDER[:fifths]:
             accidentals[letter] = "#"
     elif fifths < 0:
-        # Flats: B, E, A, D, G, C, F order
         for letter in FLAT_ORDER[: abs(fifths)]:
             accidentals[letter] = "b"
 

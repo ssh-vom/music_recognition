@@ -144,30 +144,22 @@ def _line_extent(line_mask: MatLike, y: int, half_window: int = 1) -> tuple[int,
 
 
 def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
-    """Remove staff lines while keeping vertical bar strokes.
-
-    Uses Otsu binary and removes only near detected staff lines.
-    """
+    """Remove staff lines while keeping vertical bar strokes."""
     horizontal = extract_horizontal_lines(binary)
     allowed = _staff_removal_band_mask(binary.shape, staffs)
     out = cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
 
-    # Optional slit repair
     repaired = _repair_slits(out, 3)
     return _blend_slit_repair(out, repaired, staffs)
 
 
 def erase_staff_for_notes(gray: MatLike, staffs: list[Staff] | None = None) -> MatLike:
-    """Adaptive threshold and staff removal for note detection.
-
-    Uses adaptive thresholding then subtracts staff lines.
-    """
+    """Adaptive threshold and staff removal for note detection."""
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
         inverted, MASK_ON, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
     )
 
-    # Horizontal opening
     k = max(1, bw.shape[1] // 30)
     structure = cv.getStructuringElement(cv.MORPH_RECT, (k, 1))
     h = cv.dilate(cv.erode(bw, structure), structure)
