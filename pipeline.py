@@ -7,10 +7,10 @@ from cv2.typing import MatLike
 
 from abc_export import write_abc_file
 from artifact_writer import ArtifactWriter
-from bar_detection import find_bars, save_bar_visualization, draw_bars_overlay
+from bar_detection import find_bars
 from clef_detection import ClefDetector
 from measure_splitting import MeasureDetectionConfig, MeasureSplitter
-from note_detection import NoteDetector, resolve_note_pitches
+from note_detection import find_notes, resolve_pitches
 from schema import BarLine, Clef, ClefDetection, Measure, Note, Staff
 from score_tree import ScoreTree, build_score_tree
 from staff_detection import (
@@ -22,6 +22,7 @@ from staff_detection import (
 )
 from visualization import (
     save_staff_detection,
+    save_bar_visualization,
     draw_bars_overlay,
 )
 
@@ -85,7 +86,11 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
     print("Step 3: Detecting bar lines...")
     bars = find_bars(image=bars_mask, staffs=staffs)
     bar_intermediates = save_bar_visualization(
-        image=bars_mask, staffs=staffs, bars=bars, artifacts=artifacts
+        image=raw_bgr,  # Original sheet for overlay
+        bars_mask=bars_mask,  # Binary mask for debugging
+        staffs=staffs,
+        bars=bars,
+        artifacts=artifacts,
     )
     print(f"  Found {len(bars)} bar line(s)")
 
@@ -157,9 +162,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
 
     # Step 7: Note Detection
     print("Step 7: Detecting notes...")
-    note_detector = NoteDetector()
-    _populate_notes(score_tree, note_detector)
-    note_intermediates = note_detector.save_intermediates(score_tree, artifacts)
+    _populate_notes(score_tree)
     total_notes = sum(
         len(measure_node.notes)
         for staff_node in score_tree.staff_nodes
@@ -209,12 +212,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
         )
         bar_overlay = draw_bars_overlay(raw_bgr, bars)
         cv.imshow("Bar Detection", bar_overlay)
-        cv.imshow(
-            "Clef Detection", note_intermediates.get("03_full_notes_overlay", raw_bgr)
-        )
-        cv.imshow(
-            "Notes Detection", note_intermediates.get("03_full_notes_overlay", raw_bgr)
-        )
+        # TODO: Re-add note and clef visualization after visualization module refactor
         cv.waitKey(0)
         cv.destroyAllWindows()
 
@@ -275,14 +273,14 @@ def _extract_measures(
     return measures_map, measure_crops
 
 
-def _populate_notes(score_tree: ScoreTree, note_detector: NoteDetector) -> None:
-    """Populate score tree with detected notes."""
+def _populate_notes(score_tree: ScoreTree) -> None:
+    """Populate score tree with detected notes using pure functions."""
     for staff_node in score_tree.staff_nodes:
         clef = staff_node.clef
         for measure_node in staff_node.measures:
             if measure_node.crop is None:
                 continue
-            detected_notes = note_detector.detect(
+            detected_notes = find_notes(
                 mask=measure_node.crop,
                 staff=staff_node.staff,
                 measure=measure_node.measure,
@@ -293,7 +291,7 @@ def _populate_notes(score_tree: ScoreTree, note_detector: NoteDetector) -> None:
                 staff=staff_node.staff,
                 measure_index=measure_node.index,
             )
-            resolve_note_pitches(detected_notes, clef)
+            resolve_pitches(detected_notes, clef)
             measure_node.notes = detected_notes
 
 

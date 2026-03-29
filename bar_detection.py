@@ -257,38 +257,3 @@ def _classify_repeat_dots(
         return "end"
 
     return "none"
-
-
-# Visualization functions - completely separate from detection
-
-
-def draw_bars_overlay(image: MatLike, bars: list[BarLine]) -> MatLike:
-    """Draw detected bars on the image for visualization."""
-    overlay = image.copy()
-    for bar in bars:
-        color = (0, 0, 255)  # Blue for bars
-        cv.line(overlay, (bar.x, bar.y_top), (bar.x, bar.y_bottom), color, 1)
-    return overlay
-
-
-def save_bar_visualization(
-    image: MatLike, staffs: list[Staff], bars: list[BarLine], artifacts
-) -> dict:
-    """Save visualization artifacts for bar detection.
-
-    This is called separately from detection - pass the results back in.
-    """
-    paths = {}
-
-    # 01: Input mask display (inverted for viewing)
-    paths["01_input_mask"] = artifacts.write_image(
-        artifacts.sections.bars, "01_input_mask.jpg", cv.bitwise_not(image)
-    )
-
-    # 02: Final overlay
-    overlay = draw_bars_overlay(image, bars)
-    paths["02_bar_overlay"] = artifacts.write_image(
-        artifacts.sections.bars, "02_bar_overlay.jpg", overlay
-    )
-
-    return paths
