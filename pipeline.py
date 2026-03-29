@@ -8,22 +8,29 @@ from cv2.typing import MatLike
 from abc_export import write_abc_file
 from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
-from clef_detection import ClefDetector
-from measure_splitting import MeasureDetectionConfig, MeasureSplitter
+from clef_detection import detect_clef
+from measure_splitting import (
+    crop_clef_regions,
+    crop_measures,
+    extract_clef_regions,
+    split_measures,
+)
 from note_detection import find_notes, resolve_pitches
-from schema import BarLine, Clef, ClefDetection, Measure, Note, Staff
-from score_tree import ScoreTree, build_score_tree
+from schema import BarLine, Clef, ClefDetection, Measure, Note, Score, Staff
+from score_tree import build_score
 from staff_detection import (
+    binarize,
     erase_staff_for_bars,
     erase_staff_for_notes,
     find_staves,
     to_gray,
-    binarize,
 )
 from visualization import (
-    save_staff_detection,
-    save_bar_visualization,
     draw_bars_overlay,
+    save_bar_visualization,
+    save_clef_visualization,
+    save_measure_visualization,
+    save_staff_detection,
 )
 
 DEFAULT_TITLE = "Sheet Music"
@@ -33,7 +40,7 @@ DEFAULT_KEY = "C"
 DEFAULT_TEMPO_QPM = 120
 
 
-def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
+def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     """Run complete sheet music processing pipeline with full visualization.
 
     Args:
@@ -41,7 +48,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
         show_windows: If True, display OpenCV windows (default False for batch processing)
 
     Returns:
-        ScoreTree with all detected elements and notes
+        Score with all detected elements and notes
     """
     print(f"\n{'=' * 60}")
     print(f"Processing: {image_path}")
@@ -99,15 +106,14 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
     clefs_by_staff, clef_key_crops = _extract_clef_crops(
         raw_bgr, notes_mask, staffs, bars
     )
-    clef_detector = ClefDetector()
     clef_detections: dict[int, ClefDetection] = {}
     for staff_index, crop in clef_key_crops.items():
-        detection = clef_detector.detect(crop)
+        detection = detect_clef(crop)
         clef_detections[staff_index] = detection
         clefs_by_staff[staff_index].kind = detection.clef
 
     # Save clef intermediates
-    clef_intermediates = clef_detector.save_intermediates(
+    clef_intermediates = save_clef_visualization(
         clef_key_crops, clefs_by_staff, clef_detections, artifacts
     )
     print(f"  Detected clefs: {[clef.kind for clef in clefs_by_staff.values()]}")
@@ -115,38 +121,21 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
     # Step 5: Measure Splitting
     print("Step 5: Splitting into measures...")
     measures_map, measure_crops = _extract_measures(raw_bgr, notes_mask, staffs, bars)
-    measure_splitter = MeasureSplitter(
-        bars=bars,
-        staffs=staffs,
-        sheet_img=raw_bgr,
-        config=MeasureDetectionConfig(),
-        notes_image=notes_mask,
-    )
-    measure_intermediates = measure_splitter.save_intermediates(
-        measures_map, measure_crops, raw_bgr, artifacts
-    )
-    clef_detector = ClefDetector()
-    clef_detections: dict[int, ClefDetection] = {}
-    for staff_index, crop in clef_key_crops.items():
-        detection = clef_detector.detect(crop)
-        clef_detections[staff_index] = detection
-        clefs_by_staff[staff_index].kind = detection.clef
 
-    # Save clef intermediates
-    clef_intermediates = clef_detector.save_intermediates(
-        clef_key_crops, clefs_by_staff, clef_detections, artifacts
+    # Save measure intermediates
+    measure_intermediates = save_measure_visualization(
+        sheet_image=raw_bgr,
+        measures_map=measures_map,
+        measure_crops=measure_crops,
+        artifacts=artifacts,
     )
-    print(f"  Detected clefs: {[clef.kind for clef in clefs_by_staff.values()]}")
 
-    # Step 5: Measure Splitting
-    print("Step 5: Splitting into measures...")
-    measures_map, measure_crops = _extract_measures(raw_bgr, notes_mask, staffs, bars)
     total_measures = sum(len(measures) for measures in measures_map.values())
     print(f"  Split into {total_measures} measure(s)")
 
-    # Step 6: Build Score Tree
-    print("Step 6: Building score tree...")
-    score_tree = build_score_tree(
+    # Step 6: Build Score
+    print("Step 6: Building score...")
+    score = build_score(
         image_path=image_path,
         sheet_image=raw_bgr,
         staffs=staffs,
@@ -162,29 +151,25 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
 
     # Step 7: Note Detection
     print("Step 7: Detecting notes...")
-    _populate_notes(score_tree)
-    total_notes = sum(
-        len(measure_node.notes)
-        for staff_node in score_tree.staff_nodes
-        for measure_node in staff_node.measures
-    )
+    _populate_notes(score)
+    total_notes = len(score.notes)
     print(f"  Detected {total_notes} note(s)")
 
     # Step 8: Draw full overlays
     print("Step 8: Creating visualizations...")
-    _create_full_overlays(score_tree, clefs_by_staff, clef_detections, artifacts)
+    _create_full_overlays(score, clefs_by_staff, clef_detections, artifacts)
 
     # Step 9: Generate logs
     print("Step 9: Generating logs...")
-    clef_log = _build_clef_log(score_tree)
-    note_log = _build_note_log(score_tree)
+    clef_log = _build_clef_log(score)
+    note_log = _build_note_log(score)
     artifacts.write_text(artifacts.sections.logs, "detections.txt", clef_log + note_log)
 
     # Step 10: Export to ABC notation
     print("Step 10: Exporting to ABC notation...")
     abc_path = artifacts.text_path(artifacts.sections.export, "output.abc")
     write_abc_file(
-        score_tree=score_tree,
+        score_tree=score,  # Score is backward compatible with ScoreTree
         output_path=abc_path,
         title=DEFAULT_TITLE,
         meter=DEFAULT_METER,
@@ -216,7 +201,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> ScoreTree:
         cv.waitKey(0)
         cv.destroyAllWindows()
 
-    return score_tree
+    return score
 
 
 def _build_notes_mask(image: MatLike, staffs: list[Staff]) -> MatLike:
@@ -237,14 +222,8 @@ def _extract_clef_crops(
     bars: list[BarLine],
 ) -> tuple[dict[int, Clef], dict[int, MatLike]]:
     """Extract clef header crops for each staff."""
-    splitter = MeasureSplitter(
-        bars=bars,
-        staffs=staffs,
-        sheet_img=sheet_bgr,
-        notes_image=notes_mask,
-    )
-    clefs_by_staff = splitter.extract_clef_and_key_signatures()
-    crops = splitter.crop_clef_and_key_signatures(clefs=clefs_by_staff)
+    clefs_by_staff = extract_clef_regions(staffs)
+    crops = crop_clef_regions(clefs_by_staff, sheet_bgr, notes_mask)
     return clefs_by_staff, crops
 
 
@@ -255,44 +234,60 @@ def _extract_measures(
     bars: list[BarLine],
 ) -> tuple[dict[int, list[Measure]], dict[int, list[MatLike]]]:
     """Extract measures and their crops."""
-    # Create config with custom settings
-    measure_config = MeasureDetectionConfig()
-    # Override attributes by setting on the instance
-    object.__setattr__(measure_config, "left_header_spacings", 5.2)
-    object.__setattr__(measure_config, "first_staff_conservative_spacings", 7.0)
-
-    splitter = MeasureSplitter(
+    # Split into measures with custom settings
+    # Using 5.2 for left_header (more conservative than default 7.0)
+    # Using 7.0 for first_staff_conservative (extra margin on first staff)
+    measures_map = split_measures(
         bars=bars,
         staffs=staffs,
-        sheet_img=sheet_bgr,
-        config=measure_config,
+        first_staff_conservative_spacings=7.0,
+    )
+
+    # Crop the measures from notes_mask
+    measure_crops = crop_measures(
+        measures_map=measures_map,
+        image=sheet_bgr,
+        staffs=staffs,
         notes_image=notes_mask,
     )
-    measures_map = splitter.split_measures()
-    measure_crops = splitter.crop_measures()
+
     return measures_map, measure_crops
 
 
-def _populate_notes(score_tree: ScoreTree) -> None:
-    """Populate score tree with detected notes using pure functions."""
-    for staff_node in score_tree.staff_nodes:
-        clef = staff_node.clef
-        for measure_node in staff_node.measures:
-            if measure_node.crop is None:
+def _populate_notes(score: Score) -> None:
+    """Populate score with detected notes using pure functions.
+
+    In the flat structure, notes are stored both:
+    - In their respective measure (measure.notes)
+    - In the flat score.notes list
+    """
+    score.notes = []  # Start fresh
+
+    for staff_index, staff in enumerate(score.staffs):
+        clef = score.clefs.get(staff_index)
+        staff_measures = score.get_measures_for_staff(staff_index)
+
+        for measure_index, measure in enumerate(staff_measures):
+            if measure.crop is None:
                 continue
+
             detected_notes = find_notes(
-                mask=measure_node.crop,
-                staff=staff_node.staff,
-                measure=measure_node.measure,
-                measure_index=measure_node.index,
+                mask=measure.crop,
+                staff=staff,
+                measure=measure,
+                measure_index=measure_index,
             )
             detected_notes = _remove_left_edge_header_bleed(
                 notes=detected_notes,
-                staff=staff_node.staff,
-                measure_index=measure_node.index,
+                staff=staff,
+                measure_index=measure_index,
             )
             resolve_pitches(detected_notes, clef)
-            measure_node.notes = detected_notes
+
+            # Store in measure
+            measure.notes = detected_notes
+            # Also add to flat list
+            score.notes.extend(detected_notes)
 
 
 def _remove_left_edge_header_bleed(
@@ -319,19 +314,19 @@ def _remove_left_edge_header_bleed(
 
 
 def _create_full_overlays(
-    score_tree: ScoreTree,
+    score: Score,
     clefs_by_staff: dict[int, Clef],
     clef_detections: dict[int, ClefDetection],
     artifacts: ArtifactWriter,
 ) -> None:
     """Create full-sheet overlays for clefs and notes."""
     # Clef overlay on full sheet
-    clef_overlay = score_tree.sheet_image.copy()
+    clef_overlay = score.sheet_image.copy()
     font = cv.FONT_HERSHEY_SIMPLEX
 
-    for staff_node in score_tree.staff_nodes:
-        clef = staff_node.clef
-        det = staff_node.clef_detection
+    for staff_index, staff in enumerate(score.staffs):
+        clef = clefs_by_staff.get(staff_index)
+        det = clef_detections.get(staff_index)
         if clef is None or det is None:
             continue
 
@@ -347,7 +342,7 @@ def _create_full_overlays(
 
         # Add label
         name = clef.kind if clef.kind else "?"
-        label = f"Staff {staff_node.index}: {name}  T={det.letter_score_treble:.2f} B={det.letter_score_bass:.2f}"
+        label = f"Staff {staff_index}: {name}  T={det.letter_score_treble:.2f} B={det.letter_score_bass:.2f}"
         (tw, th), baseline = cv.getTextSize(label, font, 0.55, 2)
         pad = 5
         tx, ty = x1, y2 + th + pad + 4
@@ -420,31 +415,38 @@ def _draw_overlay_box(
     )
 
 
-def _build_clef_log(score_tree: ScoreTree) -> str:
+def _build_clef_log(score: Score) -> str:
     """Build log string for clef detections."""
     lines: list[str] = []
-    for staff_node in score_tree.staff_nodes:
-        detection = staff_node.clef_detection
-        if detection is None:
-            continue
+    for staff_index, detection in score.clef_detections.items():
         lines.append(
-            f"staff {staff_node.index}: {detection.clef!r}  "
+            f"staff {staff_index}: {detection.clef!r}  "
             f"letter T/B={detection.letter_score_treble:.3f}/{detection.letter_score_bass:.3f}  "
             f"slide T/B={detection.slide_score_treble:.3f}/{detection.slide_score_bass:.3f}\n"
         )
     return "".join(lines)
 
 
-def _build_note_log(score_tree: ScoreTree) -> str:
+def _build_note_log(score: Score) -> str:
     """Build log string for note detections."""
     lines: list[str] = []
-    for staff_node in score_tree.staff_nodes:
-        for measure_node in staff_node.measures:
-            notes = measure_node.notes
+
+    # Group notes by staff and measure
+    notes_by_staff_measure: dict[tuple[int, int], list[Note]] = {}
+    for note in score.notes:
+        key = (note.staff_index, note.measure_index)
+        if key not in notes_by_staff_measure:
+            notes_by_staff_measure[key] = []
+        notes_by_staff_measure[key].append(note)
+
+    for staff_index, staff in enumerate(score.staffs):
+        staff_measures = score.get_measures_for_staff(staff_index)
+        for measure_index, measure in enumerate(staff_measures):
+            notes = notes_by_staff_measure.get((staff_index, measure_index), [])
             lines.append(
-                f"staff {staff_node.index}, measure {measure_node.index}: {len(notes)} noteheads detected\n"
+                f"staff {staff_index}, measure {measure_index}: {len(notes)} noteheads detected\n"
             )
-            for note in measure_node.notes:
+            for note in notes:
                 pitch_label = (
                     f"{note.pitch_letter}{note.octave}"
                     if note.pitch_letter is not None and note.octave is not None

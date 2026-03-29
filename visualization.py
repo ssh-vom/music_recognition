@@ -8,7 +8,7 @@ import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
-from schema import BarLine, Note, Staff
+from schema import BarLine, ClefDetection, Note, Staff
 
 
 # =============================================================================
@@ -339,3 +339,268 @@ def _draw_full_notes_overlay(score_tree) -> MatLike:
                 )
 
     return out
+
+
+# =============================================================================
+# Clef Detection Visualization
+# =============================================================================
+
+
+def draw_clef_overlay(
+    clef_crop: MatLike, detection: ClefDetection, clef_kind: str | None
+) -> MatLike:
+    """Draw clef detection overlay on the clef crop image.
+
+    Shows template matching boxes and detection scores.
+    """
+    if len(clef_crop.shape) == 2:
+        overlay = cv.cvtColor(cv.bitwise_not(clef_crop), cv.COLOR_GRAY2BGR)
+    else:
+        overlay = clef_crop.copy()
+
+    if clef_kind is None or detection is None:
+        return overlay
+
+    # Draw crop boundary
+    x1, y1 = 0, 0
+    x2, y2 = overlay.shape[1], overlay.shape[0]
+    cv.rectangle(overlay, (x1, y1), (x2, y2), (100, 100, 100), 1)
+
+    # Draw template matching boxes
+    choice = _choose_clef_overlay_rect(clef_kind, detection)
+    if choice is not None:
+        rect, color = choice
+        _draw_overlay_box(overlay, rect, color, thickness=3)
+
+    # Add label with clef type and scores
+    name = clef_kind if clef_kind else "?"
+    label = f"{name}  T={detection.letter_score_treble:.2f} B={detection.letter_score_bass:.2f}"
+    cv.putText(
+        overlay,
+        label,
+        (6, 22),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (30, 30, 30),
+        2,
+        cv.LINE_AA,
+    )
+
+    return overlay
+
+
+def _choose_clef_overlay_rect(clef_kind: str, detection: ClefDetection):
+    """Choose which template match box to draw for clef overlay."""
+    if (
+        clef_kind == "treble"
+        and detection.treble_match_top_left is not None
+        and detection.treble_match_size is not None
+    ):
+        x, y = detection.treble_match_top_left
+        w, h = detection.treble_match_size
+        return (x, y, w, h), (0, 200, 100)  # Green for treble
+
+    if (
+        clef_kind == "bass"
+        and detection.bass_match_top_left is not None
+        and detection.bass_match_size is not None
+    ):
+        x, y = detection.bass_match_top_left
+        w, h = detection.bass_match_size
+        return (x, y, w, h), (0, 120, 255)  # Orange for bass
+
+    if (
+        detection.treble_match_top_left is not None
+        and detection.treble_match_size is not None
+    ):
+        x, y = detection.treble_match_top_left
+        w, h = detection.treble_match_size
+        return (x, y, w, h), (180, 180, 180)  # Gray for undetermined
+
+    return None
+
+
+def _draw_overlay_box(image: MatLike, rect: tuple, color: tuple, *, thickness: int = 3):
+    """Draw a rectangle on the image."""
+    x, y, w, h = rect
+    if w < 2 or h < 2:
+        return
+    cv.rectangle(
+        image,
+        (x, y),
+        (x + w - 1, y + h - 1),
+        color,
+        thickness,
+    )
+
+
+# =============================================================================
+# Measure Splitting Visualization
+# =============================================================================
+
+
+def draw_measure_boundaries(image: MatLike, measures_map: dict[int, list]) -> MatLike:
+    """Draw measure boundaries on the sheet image.
+
+    Draws blue rectangles around each detected measure region.
+    """
+    overlay = image.copy()
+
+    for staff_index, measures in measures_map.items():
+        for measure in measures:
+            cv.rectangle(
+                overlay,
+                (measure.x_start, measure.y_top),
+                (measure.x_end - 1, measure.y_bottom),
+                (255, 0, 0),  # Blue
+                1,
+            )
+
+    return overlay
+
+
+def save_measure_visualization(
+    sheet_image: MatLike,
+    measures_map: dict[int, list],
+    measure_crops: dict[int, list[MatLike]],
+    artifacts,
+) -> dict:
+    """Save measure splitting visualization artifacts.
+
+    Creates:
+    01_measure_boundaries - Full sheet with measure rectangles
+    02_measure_crops/staff_X/measure_Y.jpg - Individual cropped measures
+    """
+    paths = {}
+
+    # 01: Measure boundaries overlay on full sheet
+    overlay = draw_measure_boundaries(sheet_image, measures_map)
+    paths["01_measure_boundaries"] = artifacts.write_image(
+        artifacts.sections.pipeline, "01_measure_boundaries.jpg", overlay
+    )
+
+    # 02: Individual measure crops organized by staff
+    crops_dir = artifacts.ensure_subdir(artifacts.sections.pipeline, "02_measure_crops")
+    for staff_index, crops in measure_crops.items():
+        staff_dir = crops_dir / f"staff_{staff_index}"
+        staff_dir.mkdir(exist_ok=True)
+        for measure_index, crop in enumerate(crops):
+            if len(crop.shape) == 2:
+                crop_display = cv.bitwise_not(crop)
+            else:
+                crop_display = crop
+            crop_path = staff_dir / f"measure_{measure_index}.jpg"
+            cv.imwrite(str(crop_path), crop_display)
+    paths["02_measure_crops"] = crops_dir
+
+    return paths
+
+
+def save_clef_visualization(
+    clef_key_crops: dict[int, MatLike],
+    clefs_by_staff: dict,
+    clef_detections: dict[int, ClefDetection],
+    artifacts,
+) -> dict:
+    """Save clef detection visualization artifacts.
+
+    Creates:
+    01_clef_header_crops - Individual clef+key crops per staff
+    02_detection_staff_X - Detection overlay for each staff
+    """
+    paths = {}
+
+    # 01: Save individual clef header crops
+    clef_crops_dir = artifacts.ensure_subdir(
+        artifacts.sections.clef, "01_clef_header_crops"
+    )
+    for staff_index, crop in clef_key_crops.items():
+        crop_path = clef_crops_dir / f"staff_{staff_index}.jpg"
+        if len(crop.shape) == 2:
+            display_crop = cv.bitwise_not(crop)
+        else:
+            display_crop = crop
+        cv.imwrite(str(crop_path), display_crop)
+    paths["01_clef_header_crops"] = clef_crops_dir
+
+    # 02: Detection overlays for each staff
+    for staff_index, crop in clef_key_crops.items():
+        clef = clefs_by_staff.get(staff_index)
+        detection = clef_detections.get(staff_index)
+        clef_kind = clef.kind if clef else None
+
+        if detection is not None:
+            overlay = draw_clef_overlay(crop, detection, clef_kind)
+            overlay_path = artifacts.write_image(
+                artifacts.sections.clef,
+                f"02_detection_staff_{staff_index}.jpg",
+                overlay,
+            )
+            paths[f"02_detection_staff_{staff_index}"] = overlay_path
+
+    return paths
+
+
+# =============================================================================
+# Accidental Detection Visualization
+# =============================================================================
+
+
+def draw_accidentals_overlay(image: MatLike, accidentals: list) -> MatLike:
+    """Draw detected accidentals (sharps/flats) on image.
+
+    Uses cross markers for visibility:
+    - Magenta (#FF00FF) for sharps
+    - Orange (#FF8000) for flats
+    """
+    out = image.copy()
+
+    for acc in accidentals:
+        # Color based on accidental type
+        color = (255, 0, 255) if acc.kind == "sharp" else (255, 128, 0)
+
+        # Draw cross marker at accidental center
+        cv.drawMarker(
+            out,
+            (acc.center_x, acc.center_y),
+            color,
+            markerType=cv.MARKER_CROSS,
+            markerSize=10,
+            thickness=1,
+            line_type=cv.LINE_AA,
+        )
+
+        # Add text label (S for sharp, F for flat)
+        label = acc.kind[0].upper()
+        cv.putText(
+            out,
+            label,
+            (acc.center_x + 6, acc.center_y + 4),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            color,
+            1,
+            cv.LINE_AA,
+        )
+
+    return out
+
+
+def save_accidental_visualization(
+    image: MatLike,
+    accidentals: list,
+    artifacts,
+) -> dict:
+    """Save accidental detection visualization.
+
+    Creates overlay showing detected sharps and flats.
+    """
+    paths = {}
+
+    if accidentals:
+        overlay = draw_accidentals_overlay(image, accidentals)
+        paths["accidentals_overlay"] = artifacts.write_image(
+            artifacts.sections.notes, "accidentals_overlay.jpg", overlay
+        )
+
+    return paths

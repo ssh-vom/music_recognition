@@ -1,10 +1,12 @@
+"""ABC notation export - compatible with flat Score structure."""
+
 from pathlib import Path
 
-from schema import BarLine
+from schema import BarLine, Score
 
 
 def write_abc_file(
-    score_tree,
+    score_tree,  # Can be Score or old ScoreTree
     output_path,
     *,
     title="Sheet Music",
@@ -15,7 +17,7 @@ def write_abc_file(
     tempo_qpm=120,
 ):
     abc_text = build_abc_text(
-        score_tree=score_tree,
+        score=score_tree,
         title=title,
         reference_number=reference_number,
         meter=meter,
@@ -29,7 +31,7 @@ def write_abc_file(
 
 
 def build_abc_text(
-    score_tree, *, title, reference_number, meter, unit_note_length, key, tempo_qpm
+    score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm
 ):
     header_lines = [
         f"X:{reference_number}",
@@ -39,11 +41,77 @@ def build_abc_text(
         f"Q:1/4={tempo_qpm}",
         f"K:{key}",
     ]
-    body = notes_to_abc_body(score_tree=score_tree, meter=meter)
+    body = notes_to_abc_body(score=score, meter=meter)
     return "\n".join(header_lines) + "\n" + body + "\n"
 
 
-def notes_to_abc_body(score_tree, *, meter):
+def notes_to_abc_body(score, *, meter):
+    """Convert Score to ABC body text.
+
+    Works with both flat Score structure and old nested ScoreTree.
+    """
+    # Handle both old ScoreTree (has staff_nodes) and new Score (has staffs)
+    if hasattr(score, "staff_nodes"):
+        # Old structure - use legacy path
+        return _notes_to_abc_body_legacy(score, meter)
+
+    # New flat Score structure
+    staff_lines = []
+    default_rest = _default_measure_rest(meter)
+    beats_per_measure = _meter_numerator(meter)
+
+    # Group measures and bars by staff
+    for staff_index, staff in enumerate(score.staffs):
+        staff_measures = score.get_measures_for_staff(staff_index)
+        staff_bars = score.get_bars_for_staff(staff_index)
+
+        if not staff_measures:
+            continue
+
+        segments = []
+
+        # Check for repeat at beginning
+        start_repeat = _has_left_begin_repeat_flat(staff_bars, staff_measures)
+        if start_repeat:
+            segments.append("|:")
+        else:
+            segments.append("|")
+
+        for measure_index, measure in enumerate(staff_measures):
+            # Get notes for this measure from the flat list
+            notes = score.get_notes_for_measure(staff_index, measure_index)
+
+            tokens = _notes_to_measure_tokens(
+                notes=notes,
+                beats_per_measure=beats_per_measure,
+            )
+            if not tokens:
+                tokens = [default_rest]
+
+            segments.append(" ".join(tokens))
+
+            # Add bar separator
+            if measure_index < len(staff_measures) - 1:
+                boundary_bar = measure.closing_bar
+                segments.append(_boundary_separator(boundary_bar))
+            else:
+                # End of staff - check for end repeat
+                end_bar = _find_end_bar(staff_bars, staff_measures)
+                if end_bar is not None and end_bar.repeat == "end":
+                    segments.append(":|")
+                else:
+                    segments.append("|")
+
+        staff_lines.append(" ".join(segments))
+
+    if len(staff_lines) == 0:
+        return f"| {default_rest} |"
+
+    return "\n".join(staff_lines)
+
+
+def _notes_to_abc_body_legacy(score_tree, meter):
+    """Legacy path for old nested ScoreTree structure."""
     staff_lines = []
     default_rest = _default_measure_rest(meter)
     beats_per_measure = _meter_numerator(meter)
@@ -53,7 +121,7 @@ def notes_to_abc_body(score_tree, *, meter):
             continue
         segments = []
 
-        start_repeat = _has_left_begin_repeat(staff_node)
+        start_repeat = _has_left_begin_repeat_legacy(staff_node)
         if start_repeat:
             segments.append("|:")
         else:
@@ -87,6 +155,52 @@ def notes_to_abc_body(score_tree, *, meter):
     return "\n".join(staff_lines)
 
 
+def _has_left_begin_repeat_legacy(staff_node):
+    """Check if staff starts with a begin repeat (legacy)."""
+    if not staff_node.bars:
+        return False
+    if not staff_node.measures:
+        return False
+
+    first_measure = staff_node.measures[0].measure
+    tol = 8
+    for bar in staff_node.bars:
+        if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
+            return True
+    return False
+
+
+def _has_left_begin_repeat_flat(
+    staff_bars: list[BarLine], staff_measures: list
+) -> bool:
+    """Check if staff starts with a begin repeat (flat structure)."""
+    if not staff_bars or not staff_measures:
+        return False
+
+    first_measure = staff_measures[0]
+    tol = 8
+    for bar in staff_bars:
+        if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
+            return True
+    return False
+
+
+def _find_end_bar(staff_bars: list[BarLine], staff_measures: list) -> BarLine | None:
+    """Find the bar line at the end of the staff."""
+    if not staff_measures:
+        return None
+
+    last_measure = staff_measures[-1]
+    tol = 10
+
+    right_candidates = [
+        bar for bar in staff_bars if bar.x >= (last_measure.x_end - tol)
+    ]
+    if not right_candidates:
+        return None
+    return max(right_candidates, key=lambda bar: bar.x)
+
+
 def _default_measure_rest(meter):
     numerator = 4
     if "/" in meter:
@@ -103,20 +217,6 @@ def _meter_numerator(meter):
         if left.isdigit():
             numerator = max(1, int(left))
     return numerator
-
-
-def _has_left_begin_repeat(staff_node):
-    if not staff_node.bars:
-        return False
-    if not staff_node.measures:
-        return False
-
-    first_measure = staff_node.measures[0].measure
-    tol = 8
-    for bar in staff_node.bars:
-        if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
-            return True
-    return False
 
 
 def _boundary_separator(bar):
