@@ -27,8 +27,12 @@ FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")  # Reverse circle of fifths
 
 
 def find_notes(
-    mask: MatLike, staff: Staff, measure: Measure, measure_index: int
-) -> list[Note]:
+    mask: MatLike,
+    staff: Staff,
+    measure: Measure,
+    measure_index: int,
+    return_intermediates: bool = False,
+) -> list[Note] | tuple[list[Note], dict | None]:
     """Find all noteheads in a measure.
 
     Process:
@@ -36,10 +40,22 @@ def find_notes(
     2. Connected components to find candidate blobs
     3. Filter by size, aspect ratio, and area
     4. Merge nearby detections
-    5. Classify pitch and duration
+    5. Augment from stems (if few notes detected)
+    6. Classify pitch and duration
 
     All thresholds are expressed as ratios of staff spacing for scale invariance.
+
+    Args:
+        mask: Binary measure image
+        staff: Staff object with spacing information
+        measure: Measure object with position information
+        measure_index: Index of the measure
+        return_intermediates: If True, returns tuple of (notes, intermediates_dict)
+
+    Returns:
+        List of Note objects, or tuple of (notes, intermediates) if return_intermediates=True
     """
+    intermediates: dict | None = {} if return_intermediates else None
     # STEP 1: Morphological processing
     # Kernel diameter = 45% of staff spacing - targets notehead-sized regions
     kernel_diameter = max(1, int(round(staff.spacing * 0.45)))
@@ -56,6 +72,11 @@ def find_notes(
     notehead_mask = cv.morphologyEx(opened_mask, cv.MORPH_CLOSE, close_kernel)
     secondary_mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, close_kernel)
 
+    if intermediates is not None:
+        intermediates["opened_mask"] = opened_mask.copy()
+        intermediates["notehead_mask"] = notehead_mask.copy()
+        intermediates["secondary_mask"] = secondary_mask.copy()
+
     # STEP 2: Find connected components
     count, _, stats, centroids = cv.connectedComponentsWithStats(
         notehead_mask, connectivity=8
@@ -63,6 +84,13 @@ def find_notes(
     secondary_count, _, secondary_stats, secondary_centroids = (
         cv.connectedComponentsWithStats(secondary_mask, connectivity=8)
     )
+
+    if intermediates is not None:
+        intermediates["connected_components"] = {
+            "count": count,
+            "stats": stats.copy(),
+            "centroids": centroids.copy(),
+        }
 
     # STEP 3: Filter candidates by geometry
     # Area thresholds: 8% to 180% of staff spacing squared
@@ -85,20 +113,22 @@ def find_notes(
     tiny_area = staff.spacing * staff.spacing * 0.22
 
     raw_centers = []
+    filtered_info = [] if intermediates is not None else None
 
     for i in range(1, count):
         w = int(stats[i, cv.CC_STAT_WIDTH])
         h = int(stats[i, cv.CC_STAT_HEIGHT])
         area = float(stats[i, cv.CC_STAT_AREA])
 
+        passed = True
         if area < min_area or area > max_area:
-            continue
+            passed = False
         if w < min_size or h < min_size or w > max_size or h > max_size:
-            continue
+            passed = False
 
         aspect = w / float(h)
         if aspect < min_aspect or aspect > max_aspect:
-            continue
+            passed = False
 
         cx = int(round(centroids[i][0]))
         cy = int(round(centroids[i][1]))
@@ -118,7 +148,26 @@ def find_notes(
             if refined:
                 cx, cy = refined
 
-        raw_centers.append((cx, cy))
+        if passed:
+            raw_centers.append((cx, cy))
+
+        if filtered_info is not None:
+            filtered_info.append(
+                {
+                    "id": i,
+                    "x": cx,
+                    "y": cy,
+                    "w": w,
+                    "h": h,
+                    "area": area,
+                    "aspect": aspect,
+                    "passed": passed,
+                }
+            )
+
+    if intermediates is not None:
+        intermediates["filtered_components"] = filtered_info
+        intermediates["raw_centers_before_merge"] = raw_centers.copy()
 
     # STEP 4: Merge nearby detections
     # Merge distance: 75% of staff spacing
@@ -128,9 +177,19 @@ def find_notes(
 
     merged = _merge_centers(raw_centers, merge_dist)
 
+    if intermediates is not None:
+        intermediates["centers_after_merge"] = merged.copy()
+
     # STEP 5: Augment from stems (if few notes found)
     # Looks for tall vertical components that might be missed stems
-    merged = _augment_from_stems(mask, merged, staff.spacing, mask.shape[1], merge_dist)
+    stem_info = {} if intermediates is not None else None
+    merged = _augment_from_stems(
+        mask, merged, staff.spacing, mask.shape[1], merge_dist, stem_info
+    )
+
+    if intermediates is not None:
+        intermediates["stem_augmentation"] = stem_info
+        intermediates["centers_after_stems"] = merged.copy()
 
     # STEP 6: Convert to notes with pitch and duration
     bottom_line_y = int(round(staff.lines[4].y - measure.y_top))
@@ -160,7 +219,14 @@ def find_notes(
         )
 
     notes.sort(key=lambda n: n.center_x)
-    return _collapse_duplicates(notes, staff.spacing)
+    final_notes = _collapse_duplicates(notes, staff.spacing)
+
+    if intermediates is not None:
+        intermediates["final_notes"] = final_notes
+
+    if return_intermediates:
+        return final_notes, intermediates
+    return final_notes
 
 
 def _merge_centers(centers: list[tuple[int, int]], merge_dist: int) -> list[list]:
@@ -219,7 +285,12 @@ def _step_confidence(residual: float) -> StepConfidence:
 
 
 def _augment_from_stems(
-    mask: MatLike, centers: list, spacing: float, width: int, merge_dist: int
+    mask: MatLike,
+    centers: list,
+    spacing: float,
+    width: int,
+    merge_dist: int,
+    stem_info: dict | None = None,
 ) -> list:
     """Look for missed notes by finding tall vertical components (stems).
 
@@ -233,6 +304,9 @@ def _augment_from_stems(
     - Position: not at right edge (margin = 60% of spacing)
     """
     if len(centers) > 2:
+        if stem_info is not None:
+            stem_info["skipped"] = True
+            stem_info["reason"] = "too_many_notes"
         return centers
 
     count, _, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
@@ -241,6 +315,8 @@ def _augment_from_stems(
     # Right edge margin to avoid page edge artifacts
     margin = max(2, int(round(spacing * 0.6)))
     added = 0
+    all_stems = [] if stem_info is not None else None
+    added_stems = [] if stem_info is not None else None
 
     for i in range(1, count):
         x = int(stats[i, cv.CC_STAT_LEFT])
@@ -249,17 +325,31 @@ def _augment_from_stems(
         h = int(stats[i, cv.CC_STAT_HEIGHT])
         area = float(stats[i, cv.CC_STAT_AREA])
 
+        stem_data = {"id": i, "x": x, "y": y, "w": w, "h": h, "area": area}
+
         # Tall component check: height >= 2x spacing
         if h < int(round(spacing * 2.0)):
+            stem_data["rejected"] = "too_short"
+            if all_stems is not None:
+                all_stems.append(stem_data)
             continue
         # Width check: not too wide (<= 1.5x spacing)
         if w > int(round(spacing * 1.5)):
+            stem_data["rejected"] = "too_wide"
+            if all_stems is not None:
+                all_stems.append(stem_data)
             continue
         # Area check: substantial enough (>= 35% spacing^2)
         if area < spacing * spacing * 0.35:
+            stem_data["rejected"] = "too_small"
+            if all_stems is not None:
+                all_stems.append(stem_data)
             continue
         # Edge check: not at right margin
         if x + w >= width - margin:
+            stem_data["rejected"] = "at_edge"
+            if all_stems is not None:
+                all_stems.append(stem_data)
             continue
 
         # Place notehead at stem base, slightly above bottom
@@ -277,12 +367,28 @@ def _augment_from_stems(
                 break
 
         if overlaps:
+            stem_data["rejected"] = "overlaps"
+            if all_stems is not None:
+                all_stems.append(stem_data)
             continue
 
         augmented.append([cx, cy, 1])
         added += 1
+        stem_data["added"] = True
+        stem_data["note_x"] = cx
+        stem_data["note_y"] = cy
+        if all_stems is not None:
+            all_stems.append(stem_data)
+        if added_stems is not None:
+            added_stems.append(stem_data)
         if added >= 1:
             break
+
+    if stem_info is not None:
+        stem_info["all_stems"] = all_stems
+        stem_info["added_stems"] = added_stems
+        stem_info["original_count"] = len(centers)
+        stem_info["final_count"] = len(augmented)
 
     augmented.sort(key=lambda c: c[0])
     return augmented

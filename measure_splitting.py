@@ -18,7 +18,11 @@ FIRST_STAFF_CONSERVATIVE_SPACINGS = None  # Optional: extra margin for first sta
 
 
 def split_measures(
-    bars: list, staffs: list, *, first_staff_conservative_spacings: float | None = None
+    bars: list,
+    staffs: list,
+    *,
+    left_header_spacings: float = LEFT_HEADER_SPACINGS,
+    first_staff_conservative_spacings: float | None = None,
 ) -> dict[int, list[Measure]]:
     """Split all staves into measures using detected bar lines.
 
@@ -33,6 +37,7 @@ def split_measures(
             staff=staff,
             staff_index=staff_index,
             staff_bars=staff_bars,
+            left_header_spacings=left_header_spacings,
         )
 
     # Apply first staff start policy if configured
@@ -68,14 +73,14 @@ def _staff_right(staff) -> int:
     return max(line.x_end for line in staff.lines) + 1
 
 
-def _content_start_x(staff) -> int:
+def _content_start_x(staff, left_header_spacings: float = LEFT_HEADER_SPACINGS) -> int:
     """Calculate where actual note content starts (after clef/key header).
 
-    Left header width = 7.0 * staff.spacing (clef + key signature)
+    Left header width = left_header_spacings * staff.spacing (clef + key signature)
     """
     staff_left = _staff_left(staff)
     staff_right = _staff_right(staff)
-    header_width = int(round(LEFT_HEADER_SPACINGS * staff.spacing))
+    header_width = int(round(left_header_spacings * staff.spacing))
     content_start = staff_left + header_width
 
     return max(staff_left, min(staff_right, content_start))
@@ -115,13 +120,18 @@ def _build_measure(x_start: int, x_end: int, staff, staff_index: int) -> Measure
     )
 
 
-def _split_staff(staff, staff_index: int, staff_bars: list) -> list[Measure]:
+def _split_staff(
+    staff,
+    staff_index: int,
+    staff_bars: list,
+    left_header_spacings: float = LEFT_HEADER_SPACINGS,
+) -> list[Measure]:
     """Split a single staff into measures using its bar lines."""
     if not staff.lines:
         return []
 
     staff_right = _staff_right(staff)
-    content_start_x = _content_start_x(staff)
+    content_start_x = _content_start_x(staff, left_header_spacings)
 
     if content_start_x >= staff_right:
         return []

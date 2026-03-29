@@ -3,7 +3,7 @@
 import cv2 as cv
 from cv2.typing import MatLike
 
-from schema import BarKind, BarLine, RepeatKind, Staff
+from schema import BarLine, RepeatKind, Staff
 
 
 def find_bars(image: MatLike, staffs: list[Staff]) -> list[BarLine]:
@@ -44,7 +44,7 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     bars = _contours_to_bars(
         contours, staff, left_skip, staff_height, y0, y1, staff_idx
     )
-    return _merge_and_classify_pairs(bars, staff)
+    return _merge_and_classify_pairs(bars, staff, staff_idx)
 
 
 def _contours_to_bars(
@@ -134,7 +134,9 @@ def _contours_to_bars(
     return bars
 
 
-def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff) -> list[BarLine]:
+def _merge_and_classify_pairs(
+    bars: list[BarLine], staff: Staff, staff_idx: int
+) -> list[BarLine]:
     """Merge nearby bars and classify close pairs as double bars."""
     if len(bars) < 2:
         return bars
@@ -157,7 +159,12 @@ def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff) -> list[BarLine
 
     # Convert edge pairs to double bars
     staff_right = max(line.x_end for line in staff.lines)
-    left_skip = int(round(5.0 * staff.spacing))
+    # First staff: use larger left skip for key/time signature
+    # Subsequent staffs: only skip clef area since time signature already decided
+    if staff_idx == 0:
+        left_skip = int(round(5.0 * staff.spacing))
+    else:
+        left_skip = int(round(2.0 * staff.spacing))
     edge_margin = int(round(4.0 * staff.spacing))
     left_edge = left_skip + edge_margin
     right_edge = staff_right - edge_margin

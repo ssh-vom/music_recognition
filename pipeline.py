@@ -30,6 +30,7 @@ from visualization import (
     save_bar_visualization,
     save_clef_visualization,
     save_measure_visualization,
+    save_notes_visualization,
     save_staff_detection,
 )
 
@@ -151,13 +152,19 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
 
     # Step 7: Note Detection
     print("Step 7: Detecting notes...")
-    _populate_notes(score)
+    note_intermediates = _populate_notes(score)
     total_notes = len(score.notes)
     print(f"  Detected {total_notes} note(s)")
 
     # Step 8: Draw full overlays
     print("Step 8: Creating visualizations...")
     _create_full_overlays(score, clefs_by_staff, clef_detections, artifacts)
+    save_notes_visualization(
+        notes_mask=notes_mask,
+        score=score,
+        artifacts=artifacts,
+        intermediates_by_measure=note_intermediates,
+    )
 
     # Step 9: Generate logs
     print("Step 9: Generating logs...")
@@ -235,11 +242,12 @@ def _extract_measures(
 ) -> tuple[dict[int, list[Measure]], dict[int, list[MatLike]]]:
     """Extract measures and their crops."""
     # Split into measures with custom settings
-    # Using 5.2 for left_header (more conservative than default 7.0)
-    # Using 7.0 for first_staff_conservative (extra margin on first staff)
+    # Use a slightly earlier general content start for note evaluation.
+    # Keep first staff conservative to avoid clef/key bleed in bar 1.
     measures_map = split_measures(
         bars=bars,
         staffs=staffs,
+        left_header_spacings=5.2,
         first_staff_conservative_spacings=7.0,
     )
 
@@ -254,14 +262,18 @@ def _extract_measures(
     return measures_map, measure_crops
 
 
-def _populate_notes(score: Score) -> None:
+def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
     """Populate score with detected notes using pure functions.
 
     In the flat structure, notes are stored both:
     - In their respective measure (measure.notes)
     - In the flat score.notes list
+
+    Returns:
+        Dictionary mapping (staff_index, measure_index) to intermediates dict
     """
     score.notes = []  # Start fresh
+    intermediates_by_measure: dict[tuple[int, int], dict] = {}
 
     for staff_index, staff in enumerate(score.staffs):
         clef = score.clefs.get(staff_index)
@@ -271,12 +283,20 @@ def _populate_notes(score: Score) -> None:
             if measure.crop is None:
                 continue
 
-            detected_notes = find_notes(
+            result = find_notes(
                 mask=measure.crop,
                 staff=staff,
                 measure=measure,
                 measure_index=measure_index,
+                return_intermediates=True,
             )
+            # result is tuple when return_intermediates=True
+            assert isinstance(result, tuple)
+            detected_notes = result[0]
+            intermediates = result[1]
+            assert isinstance(intermediates, dict)
+            intermediates_by_measure[(staff_index, measure_index)] = intermediates
+
             detected_notes = _remove_left_edge_header_bleed(
                 notes=detected_notes,
                 staff=staff,
@@ -288,6 +308,8 @@ def _populate_notes(score: Score) -> None:
             measure.notes = detected_notes
             # Also add to flat list
             score.notes.extend(detected_notes)
+
+    return intermediates_by_measure
 
 
 def _remove_left_edge_header_bleed(
