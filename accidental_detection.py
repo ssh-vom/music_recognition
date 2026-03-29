@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import cv2 as cv
+import numpy as np
 from cv2.typing import MatLike
 
 from schema import Accidental
@@ -93,21 +94,27 @@ def detect_key_signature_accidentals(
     x_end: int | None = None,
 ) -> list[Accidental]:
     """Detect sharps and flats in the key signature."""
-    roi = cv.bitwise_not(clef_key_crop)
-    if roi.size == 0:
+    mask_roi_full = clef_key_crop
+    if mask_roi_full.size == 0:
         return []
 
-    width = roi.shape[1]
+    width = mask_roi_full.shape[1]
     if x_end is None:
         x_end = width
     x_start = max(0, min(width, x_start))
     x_end = max(x_start, min(width, x_end))
-    key_roi = roi[:, x_start:x_end]
+    key_roi_mask = mask_roi_full[:, x_start:x_end]
 
-    if key_roi.shape[1] < 4:
+    if key_roi_mask.shape[1] < 4:
         return []
 
-    matches = _match_templates_in_roi(key_roi, staff.spacing)
+    # Tiny header crops are poorly served by template matching; use a geometric
+    # connected-component classifier on the original binary mask instead.
+    use_geometric = staff.spacing <= 8.5 or key_roi_mask.shape[1] <= 24
+    if use_geometric:
+        matches = _detect_header_accidentals_geometric(key_roi_mask, staff.spacing)
+    else:
+        matches = _match_templates_in_roi(cv.bitwise_not(key_roi_mask), staff.spacing)
 
     accidentals = []
     for score, cx, cy, kind in matches:
@@ -175,6 +182,74 @@ def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
                 candidates.append((score, cx, cy, kind))
 
     return _nms(candidates, min_dist)
+
+
+
+def _detect_header_accidentals_geometric(
+    roi: MatLike, spacing: float
+) -> list[tuple[float, int, int, str]]:
+    """Detect header accidentals using component geometry instead of templates.
+
+    For very small staff images, template matching becomes unstable because the
+    template is resized down to only a few pixels. The geometric heuristic looks
+    at each component's tall vertical stroke structure:
+    - sharp: two tall stroke clusters
+    - flat: one tall stroke cluster
+    """
+    if roi.size == 0:
+        return []
+
+    count, labels, stats, _ = cv.connectedComponentsWithStats(roi, connectivity=8)
+    min_area = max(8, int(round(spacing * spacing * 0.18)))
+    min_height = max(6, int(round(spacing * 1.8)))
+    out: list[tuple[float, int, int, str]] = []
+
+    for i in range(1, count):
+        area = int(stats[i, cv.CC_STAT_AREA])
+        if area < min_area:
+            continue
+
+        x = int(stats[i, cv.CC_STAT_LEFT])
+        y = int(stats[i, cv.CC_STAT_TOP])
+        w = int(stats[i, cv.CC_STAT_WIDTH])
+        h = int(stats[i, cv.CC_STAT_HEIGHT])
+        if h < min_height or w < 2:
+            continue
+
+        comp = (labels[y : y + h, x : x + w] == i).astype(np.uint8)
+        col_counts = np.sum(comp, axis=0)
+        tall_threshold = max(3, int(round(h * 0.75)))
+        tall_cols = [idx for idx, value in enumerate(col_counts) if value >= tall_threshold]
+        tall_clusters = _count_index_clusters(tall_cols)
+
+        # Confidence is simple but monotonic: more stroke evidence => stronger.
+        if tall_clusters >= 2:
+            kind = "sharp"
+            confidence = 0.9
+        elif tall_clusters == 1:
+            kind = "flat"
+            confidence = 0.85
+        else:
+            continue
+
+        out.append((confidence, x + w // 2, y + h // 2, kind))
+
+    return out
+
+
+
+def _count_index_clusters(indices: list[int], max_gap: int = 1) -> int:
+    """Count contiguous clusters in a sorted integer list."""
+    if not indices:
+        return 0
+
+    clusters = 1
+    prev = indices[0]
+    for value in indices[1:]:
+        if value - prev > max_gap:
+            clusters += 1
+        prev = value
+    return clusters
 
 
 def _resize_to_height(template_gray: MatLike, target_h: int) -> MatLike:

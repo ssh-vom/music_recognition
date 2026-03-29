@@ -19,6 +19,7 @@ from measure_splitting import (
     split_measures,
 )
 from note_detection import find_notes, resolve_pitches
+from rhythm_detection import refine_beamed_durations
 from schema import (
     Accidental,
     BarLine,
@@ -210,12 +211,25 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
 
     print("Step 10: Exporting to ABC notation...")
     abc_path = artifacts.text_path(artifacts.sections.export, "output.abc")
+    polyphonic_abc_path = artifacts.text_path(
+        artifacts.sections.export, "output_polyphonic.abc"
+    )
     meter = _meter_from_score(score)
     key = _abc_key_from_score(score)
     write_abc_file(
         score_tree=score,
         output_path=abc_path,
         title=DEFAULT_TITLE,
+        meter=meter,
+        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
+        key=key,
+        tempo_qpm=DEFAULT_TEMPO_QPM,
+        melody_only=True,
+    )
+    write_abc_file(
+        score_tree=score,
+        output_path=polyphonic_abc_path,
+        title=f"{DEFAULT_TITLE} (Polyphonic)",
         meter=meter,
         unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
         key=key,
@@ -232,6 +246,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     print(f"Notes: {total_notes}")
     print(f"Artifacts written to: {artifacts.root}")
     print(f"ABC file: {abc_path}")
+    print(f"Polyphonic ABC file: {polyphonic_abc_path}")
     print(f"{'=' * 60}\n")
 
     if show_windows:
@@ -714,7 +729,7 @@ def _reclassify_header_accidentals(
     crop: MatLike,
     staff_spacing: float,
 ) -> list[Accidental]:
-    """Use local component shape to correct sharp/flat mislabels."""
+    """Use local component stroke structure to correct sharp/flat mislabels."""
     if not accidentals or crop.size == 0:
         return accidentals
 
@@ -730,9 +745,30 @@ def _reclassify_header_accidentals(
             updated.append(glyph)
             continue
 
+        left = int(stats[label, cv.CC_STAT_LEFT])
+        top = int(stats[label, cv.CC_STAT_TOP])
         w = int(stats[label, cv.CC_STAT_WIDTH])
         h = int(stats[label, cv.CC_STAT_HEIGHT])
-        kind = "flat" if h >= max(6, int(round(w * 2.0))) else glyph.kind
+        comp = (labels[top : top + h, left : left + w] == label).astype("uint8")
+        col_counts = comp.sum(axis=0)
+        tall_threshold = max(3, int(round(h * 0.75)))
+        tall_cols = [i for i, value in enumerate(col_counts) if value >= tall_threshold]
+        tall_clusters = 0
+        if tall_cols:
+            tall_clusters = 1
+            prev = tall_cols[0]
+            for value in tall_cols[1:]:
+                if value - prev > 1:
+                    tall_clusters += 1
+                prev = value
+
+        if tall_clusters >= 2:
+            kind = "sharp"
+        elif tall_clusters == 1:
+            kind = "flat"
+        else:
+            kind = glyph.kind
+
         updated.append(
             Accidental(
                 kind=kind,
@@ -819,6 +855,15 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
                 staff=staff,
                 measure_index=measure_index,
             )
+
+            # Phase 2: Beam-aware rhythm refinement
+            # This only updates duration_class, never adds new notes
+            detected_notes = refine_beamed_durations(
+                mask=measure.crop,
+                notes=detected_notes,
+                staff=staff,
+            )
+
             resolve_pitches(detected_notes, clef)
 
             measure.notes = detected_notes

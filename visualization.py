@@ -614,7 +614,15 @@ def _draw_full_notes_overlay(score: Score) -> MatLike:
                     else "?"
                 )
                 duration_label = note.duration_class if note.duration_class else "?"
-                label = f"{note.step} {pitch_label} {duration_label}"
+                # Use short codes for durations
+                duration_short = {
+                    "whole": "w",
+                    "half": "h", 
+                    "quarter": "q",
+                    "eighth": "8",
+                    "sixteenth": "16",
+                }.get(duration_label, duration_label)
+                label = f"{note.step} {pitch_label} {duration_short}"
                 cv.putText(
                     out,
                     label,

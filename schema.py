@@ -17,7 +17,7 @@ ClefKind = Literal["treble", "bass"]
 AccidentalKind = Literal["sharp", "flat"]
 AccidentalRegion = Literal["measure", "header"]
 StepConfidence = Literal["high", "medium", "low"]
-DurationClass = Literal["whole", "half", "quarter"]
+DurationClass = Literal["whole", "half", "quarter", "eighth", "sixteenth"]
 
 
 @dataclass
