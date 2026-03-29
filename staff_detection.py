@@ -1,8 +1,4 @@
-"""Staff detection - pure functions, no classes.
-
-Find staves via Otsu binarization, horizontal line mask, and 5-line grouping.
-Also provides staff line erasure for downstream processing.
-"""
+"""Staff detection - find the 5-line staves."""
 
 import cv2 as cv
 import numpy as np
@@ -13,11 +9,6 @@ from schema import Staff, StaffLine
 
 
 def find_staves(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
-    """Find all staves in the sheet music image.
-
-    Returns:
-        Tuple of (staffs, binary_image, line_mask)
-    """
     gray = to_gray(image)
     binary = binarize(gray)
     line_mask = extract_horizontal_lines(binary)
@@ -27,14 +18,12 @@ def find_staves(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
 
 
 def to_gray(image: MatLike) -> MatLike:
-    """Convert image to grayscale if needed."""
     if len(image.shape) == 2:
         return image.copy()
     return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
 
 def binarize(gray: MatLike) -> MatLike:
-    """Apply Otsu thresholding to create binary image."""
     blurred = cv.GaussianBlur(gray, (5, 5), 0)
     _, binary = cv.threshold(
         blurred, MASK_OFF, MASK_ON, cv.THRESH_BINARY_INV + cv.THRESH_OTSU
@@ -43,7 +32,6 @@ def binarize(gray: MatLike) -> MatLike:
 
 
 def extract_horizontal_lines(binary: MatLike) -> MatLike:
-    """Extract horizontal line mask using morphological opening."""
     image_width = binary.shape[1]
     kernel_width = max(25, image_width // 12)
     kernel_width = max(1, min(kernel_width, image_width))
@@ -52,7 +40,6 @@ def extract_horizontal_lines(binary: MatLike) -> MatLike:
 
 
 def find_line_centers(line_mask: MatLike) -> list[int]:
-    """Find y-coordinates of strong horizontal lines."""
     min_ratio = 0.35
     row_strength = np.sum(line_mask > MASK_OFF, axis=1).astype(np.float32)
 
@@ -69,7 +56,6 @@ def find_line_centers(line_mask: MatLike) -> list[int]:
 
 
 def _cluster_rows(rows: np.ndarray, max_gap: int = 1) -> list[int]:
-    """Cluster adjacent row indices into center points."""
     if rows.size == 0:
         return []
 
@@ -93,7 +79,6 @@ def _cluster_rows(rows: np.ndarray, max_gap: int = 1) -> list[int]:
 def group_into_staves(
     line_centers: list[int], line_mask: MatLike, shape: tuple
 ) -> list[Staff]:
-    """Group detected lines into 5-line staves."""
     staffs = []
     n = 5  # lines per staff
     gap_count = n - 1
@@ -129,7 +114,6 @@ def group_into_staves(
 
 
 def _line_extent(line_mask: MatLike, y: int, half_window: int = 1) -> tuple[int, int]:
-    """Find horizontal extent of a line at given y-coordinate."""
     top = max(0, y - half_window)
     bottom = min(line_mask.shape[0], y + half_window + 1)
     cols = np.flatnonzero(np.any(line_mask[top:bottom, :] > MASK_OFF, axis=0))
@@ -140,11 +124,7 @@ def _line_extent(line_mask: MatLike, y: int, half_window: int = 1) -> tuple[int,
     return int(cols[0]), int(cols[-1])
 
 
-# Staff erasure functions
-
-
 def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
-    """Remove staff lines while keeping vertical bar strokes."""
     horizontal = extract_horizontal_lines(binary)
     allowed = _staff_removal_band_mask(binary.shape, staffs)
     out = cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
@@ -154,7 +134,6 @@ def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
 
 
 def erase_staff_for_notes(gray: MatLike, staffs: list[Staff] | None = None) -> MatLike:
-    """Adaptive threshold and staff removal for note detection."""
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
         inverted, MASK_ON, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
@@ -174,7 +153,6 @@ def erase_staff_for_notes(gray: MatLike, staffs: list[Staff] | None = None) -> M
 
 
 def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:
-    """Create mask for staff line removal zones."""
     h, w = int(shape[0]), int(shape[1])
     allowed = np.zeros((h, w), dtype=np.uint8)
 
@@ -191,7 +169,6 @@ def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:
 
 
 def _repair_slits(ink: MatLike, vertical_extent: int) -> MatLike:
-    """Close thin horizontal gaps using vertical morphological close."""
     if vertical_extent <= 0:
         return ink
     k = max(3, min(7, vertical_extent))
@@ -202,7 +179,6 @@ def _repair_slits(ink: MatLike, vertical_extent: int) -> MatLike:
 def _blend_slit_repair(
     original: MatLike, repaired: MatLike, staffs: list[Staff]
 ) -> MatLike:
-    """Blend repaired regions only near staff lines."""
     h, w = original.shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
 

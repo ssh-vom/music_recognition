@@ -1,8 +1,4 @@
-"""Clef detection (treble vs bass) via template matching.
-
-Uses OpenCV matchTemplate with letterbox and multi-scale approaches.
-https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html
-"""
+"""Clef detection - figure out if it's treble or bass."""
 
 from pathlib import Path
 
@@ -22,7 +18,6 @@ LETTERBOX_TIE_MARGIN = 0.06
 
 
 def _load_templates() -> tuple[MatLike, MatLike]:
-    """Load and cache clef templates, trimming white margins."""
     global _TREBLE_TEMPLATE, _BASS_TEMPLATE
 
     if _TREBLE_TEMPLATE is None:
@@ -34,23 +29,20 @@ def _load_templates() -> tuple[MatLike, MatLike]:
 
 
 def _load_and_trim(path: Path) -> MatLike:
-    """Load template image and trim white margins."""
     img = cv.imread(str(path), cv.IMREAD_COLOR)
     if img is None:
-        raise FileNotFoundError(f"Cannot read clef template: {path}")
+        raise FileNotFoundError(f"Can't read clef template: {path}")
     gray = _to_gray(img)
     return _trim_white(gray)
 
 
 def _to_gray(image: MatLike) -> MatLike:
-    """Convert image to grayscale if needed."""
     if len(image.shape) == 2:
         return image
     return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
 
 def _trim_white(gray: MatLike, white_thresh: int = 248) -> MatLike:
-    """Trim white margins from template image."""
     _, inv = cv.threshold(gray, white_thresh, 255, cv.THRESH_BINARY_INV)
     pts = cv.findNonZero(inv)
     if pts is None:
@@ -62,7 +54,6 @@ def _trim_white(gray: MatLike, white_thresh: int = 248) -> MatLike:
 
 
 def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
-    """Detect treble or bass clef in a clef+key signature crop."""
     treble_template, bass_template = _load_templates()
 
     left = _prepare_left_roi(clef_key_crop)
@@ -106,7 +97,6 @@ def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
 
 
 def _prepare_left_roi(clef_key_crop: MatLike) -> MatLike | None:
-    """Extract left portion of crop where clef appears."""
     gray = _to_gray(clef_key_crop)
     gray = cv.bitwise_not(gray)
 
@@ -118,10 +108,7 @@ def _prepare_left_roi(clef_key_crop: MatLike) -> MatLike | None:
     return left
 
 
-def _decide_clef(
-    treble_score: float, bass_score: float
-) -> tuple[ClefKind | None, float]:
-    """Decide clef type based on match scores."""
+def _decide_clef(treble_score: float, bass_score: float) -> tuple[ClefKind | None, float]:
     if treble_score + LETTERBOX_TIE_MARGIN >= bass_score:
         winner = "treble"
         confidence = treble_score
@@ -135,7 +122,6 @@ def _decide_clef(
 
 
 def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, tuple]:
-    """Match template to ROI using letterbox approach."""
     roi_h, roi_w = roi_gray.shape[:2]
     th, tw = template_gray.shape[:2]
 
@@ -170,10 +156,7 @@ def _letterbox_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, 
     return score, rect
 
 
-def _multi_scale_match(
-    roi_gray: MatLike, template_gray: MatLike
-) -> tuple[float, tuple]:
-    """Match template using sliding window at multiple scales."""
+def _multi_scale_match(roi_gray: MatLike, template_gray: MatLike) -> tuple[float, tuple]:
     roi_h, roi_w = roi_gray.shape[:2]
     best_score = 0.0
     best_rect = (0, 0, 0, 0)
@@ -200,7 +183,6 @@ def _multi_scale_match(
 
 
 def _resize_to_height(template_gray: MatLike, target_h: int) -> MatLike:
-    """Resize template to target height, maintaining aspect ratio."""
     th, tw = template_gray.shape[:2]
     if th < 1 or target_h < 1:
         return template_gray
@@ -214,7 +196,6 @@ def _resize_to_height(template_gray: MatLike, target_h: int) -> MatLike:
 
 
 def _fit_to_roi(template_gray: MatLike, roi_h: int, roi_w: int) -> MatLike:
-    """Ensure template fits within ROI dimensions."""
     th, tw = template_gray.shape[:2]
     if th <= 0 or tw <= 0:
         return template_gray

@@ -1,18 +1,13 @@
-"""Bar line detection - pure functions, no classes, minimal state."""
+"""Bar line detection - find the vertical lines that separate measures."""
 
 import cv2 as cv
 from cv2.typing import MatLike
 
-from schema import BarLine, RepeatKind, Staff
+from schema import BarLine, Staff
 
 
 def find_bars(image: MatLike, staffs: list[Staff]) -> list[BarLine]:
-    """Find all bar lines in the sheet music.
-
-    Pure function - takes image and staff list, returns detected bars.
-    No side effects, no internal state to manage.
-    """
-    all_bars: list[BarLine] = []
+    all_bars = []
 
     for staff_idx, staff in enumerate(staffs):
         staff_bars = _find_staff_bars(image, staff, staff_idx)
@@ -22,23 +17,19 @@ def find_bars(image: MatLike, staffs: list[Staff]) -> list[BarLine]:
 
 
 def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLine]:
-    """Find bars in a single staff region."""
     y0, y1 = staff.top, staff.bottom + 1
     staff_height = y1 - y0
     roi = image[y0:y1, :]
 
-    # Skip left header area (clef/key signature)
     left_skip = int(round(5.0 * staff.spacing))
     work = roi[:, left_skip:]
     if work.size == 0:
         return []
 
-    # Close vertical gaps in bar lines (kernel height = 2x spacing)
     kernel_h = max(5, int(round(2.0 * staff.spacing)))
     close_kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h))
     joined = cv.morphologyEx(work, cv.MORPH_CLOSE, close_kernel)
 
-    # Find vertical contours
     contours, _ = cv.findContours(joined, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
     bars = _contours_to_bars(
@@ -56,7 +47,6 @@ def _contours_to_bars(
     y1: int,
     staff_idx: int,
 ) -> list[BarLine]:
-    """Convert contours to bar line candidates."""
     staff_right = max(line.x_end for line in staff.lines)
     max_width = int(round(0.6 * staff.spacing))
     min_double_width = int(round(1.0 * staff.spacing))
@@ -67,11 +57,9 @@ def _contours_to_bars(
     for contour in contours:
         x, _, width, height = cv.boundingRect(contour)
 
-        # Filter by height (must be at least 40% of staff height)
         if height < int(round(0.4 * staff_height)):
             continue
 
-        # Filter by density (must be at least 55% solid)
         area = width * height
         if area == 0:
             continue
@@ -88,17 +76,13 @@ def _contours_to_bars(
             near_left_edge and width <= left_relaxed_max and density >= 0.50
         )
 
-        # Density filter
         if density < 0.55 and not is_left_relaxed:
             continue
 
-        # Thick bar filter
         if width > max_width and density < 0.75 and not is_left_relaxed:
             continue
 
-        # Determine bar type
         if width >= min_double_width and near_right_edge:
-            # Double bar at staff end
             bars.append(
                 BarLine(
                     x=abs_left,
@@ -137,15 +121,13 @@ def _contours_to_bars(
 def _merge_and_classify_pairs(
     bars: list[BarLine], staff: Staff, staff_idx: int
 ) -> list[BarLine]:
-    """Merge nearby bars and classify close pairs as double bars."""
     if len(bars) < 2:
         return bars
 
     bars.sort(key=lambda b: b.x)
 
-    # Merge nearby singles
     merge_dist = max(3, int(round(0.5 * staff.spacing)))
-    merged: list[BarLine] = [bars[0]]
+    merged = [bars[0]]
 
     for bar in bars[1:]:
         prev = merged[-1]
@@ -157,10 +139,7 @@ def _merge_and_classify_pairs(
         else:
             merged.append(bar)
 
-    # Convert edge pairs to double bars
     staff_right = max(line.x_end for line in staff.lines)
-    # First staff: use larger left skip for key/time signature
-    # Subsequent staffs: only skip clef area since time signature already decided
     if staff_idx == 0:
         left_skip = int(round(5.0 * staff.spacing))
     else:
@@ -170,7 +149,7 @@ def _merge_and_classify_pairs(
     right_edge = staff_right - edge_margin
     pair_gap = max(2, int(round(1.5 * staff.spacing)))
 
-    result: list[BarLine] = []
+    result = []
     i = 0
     while i < len(merged):
         if i + 1 < len(merged):
@@ -193,18 +172,15 @@ def _merge_and_classify_pairs(
         result.append(merged[i])
         i += 1
 
-    # Detect repeats on double bar pairs
     _mark_repeats(result, staff)
 
     return result
 
 
 def _mark_repeats(bars: list[BarLine], staff: Staff) -> None:
-    """Mark repeat signs on double bar pairs."""
     y0 = staff.top
     spacing = staff.spacing
 
-    # Repeat dot positions (between lines 2-3 and 3-4)
     dot_y_top = int(round((staff.lines[1].y + staff.lines[2].y) / 2.0)) - y0
     dot_y_bottom = int(round((staff.lines[2].y + staff.lines[3].y) / 2.0)) - y0
     dot_window = int(round(1.0 * spacing))
@@ -216,7 +192,6 @@ def _mark_repeats(bars: list[BarLine], staff: Staff) -> None:
         if left.kind != "double_left" or right.kind != "double_right":
             continue
 
-        # Check for dots
         repeat = _classify_repeat_dots(
             left.x,
             right.x,
@@ -242,11 +217,8 @@ def _classify_repeat_dots(
     dot_max_size: int,
     spacing: float,
     staff: Staff,
-) -> RepeatKind:
-    """Check for repeat dots near a double bar."""
-    # NOTE: This is a placeholder - full implementation would check actual image
-    # For now, use position-based heuristics
-
+):
+    # Placeholder - position-based heuristics for now
     staff_right = max(line.x_end for line in staff.lines)
     pair_center = (left_x + right_x) // 2
     left_skip = int(round(5.0 * spacing))
@@ -257,7 +229,6 @@ def _classify_repeat_dots(
     near_left = pair_center <= left_edge
     near_right = pair_center >= right_edge
 
-    # Position-based classification (would be image-based in full impl)
     if near_left:
         return "begin"
     if near_right:

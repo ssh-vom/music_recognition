@@ -1,7 +1,4 @@
-"""Note detection - pure functions for finding noteheads in sheet music.
-
-Converts binary measure images into note objects with pitch and duration.
-"""
+"""Note detection - find noteheads and figure out pitch/duration."""
 
 import math
 
@@ -19,11 +16,10 @@ from schema import (
     StepConfidence,
 )
 
-# Pitch constants
 LETTER_ORDER = ("C", "D", "E", "F", "G", "A", "B")
 LETTER_TO_INDEX = {letter: index for index, letter in enumerate(LETTER_ORDER)}
-SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")  # Circle of fifths order
-FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")  # Reverse circle of fifths
+SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")
+FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
 
 
 def find_notes(
@@ -32,9 +28,8 @@ def find_notes(
     measure: Measure,
     measure_index: int,
     return_intermediates: bool = False,
-) -> list[Note] | tuple[list[Note], dict | None]:
-    """Find all noteheads in a measure."""
-    intermediates: dict | None = {} if return_intermediates else None
+):
+    intermediates = {} if return_intermediates else None
 
     kernel_diameter = max(1, int(round(staff.spacing * 0.45)))
     if kernel_diameter % 2 == 0:
@@ -184,21 +179,16 @@ def find_notes(
     return final_notes
 
 
-def _merge_centers(centers: list[tuple[int, int]], merge_dist: int) -> list[list]:
-    """Merge nearby center points by averaging.
-
-    Returns list of [x, y, count] where count is number of merged points.
-    """
+def _merge_centers(centers, merge_dist: int):
     if not centers:
         return []
 
-    merged: list[list] = [[centers[0][0], centers[0][1], 1]]
+    merged = [[centers[0][0], centers[0][1], 1]]
 
     for cx, cy in centers[1:]:
         last_x, last_y, last_count = merged[-1]
 
         if abs(cx - last_x) <= merge_dist and abs(cy - last_y) <= merge_dist:
-            # Average with existing point
             new_count = last_count + 1
             new_x = int(round((last_x * last_count + cx) / new_count))
             new_y = int(round((last_y * last_count + cy) / new_count))
@@ -210,12 +200,7 @@ def _merge_centers(centers: list[tuple[int, int]], merge_dist: int) -> list[list
 
 
 def _quantize_step(step_float: float) -> int:
-    """Quantize floating-point step to integer with downward bias.
-
-    STEP_ROUND_UP_THRESHOLD = 0.58 (instead of 0.5)
-    Requires slightly more evidence before rounding up to next half-step.
-    This compensates for notehead center being slightly above geometric center.
-    """
+    # Bias downward since notehead center is often above geometric center
     STEP_ROUND_UP_THRESHOLD = 0.58
 
     lower = math.floor(step_float)
@@ -225,7 +210,6 @@ def _quantize_step(step_float: float) -> int:
 
 
 def _step_confidence(residual: float) -> StepConfidence:
-    """Classify step detection confidence based on quantization residual."""
     if residual <= 0.20:
         return "high"
     if residual <= 0.40:
@@ -235,13 +219,12 @@ def _step_confidence(residual: float) -> StepConfidence:
 
 def _augment_from_stems(
     mask: MatLike,
-    centers: list,
+    centers,
     spacing: float,
     width: int,
     merge_dist: int,
     stem_info: dict | None = None,
-) -> list:
-    """Look for missed notes by finding tall vertical components (stems)."""
+):
     if len(centers) > 2:
         if stem_info is not None:
             stem_info["skipped"] = True
@@ -327,7 +310,6 @@ def _augment_from_stems(
 
 
 def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
-    """Collapse duplicate notes that are spatially overlapping."""
     if len(notes) < 2:
         return notes
 
@@ -371,8 +353,7 @@ def _refine_from_secondary_mask(
     spacing: float,
     max_x: int,
     max_y: int,
-) -> tuple[int, int] | None:
-    """Refine notehead position using secondary (less processed) mask."""
+):
     tol = max(2, int(round(spacing * 0.95)))
     min_h = max(6, int(round(spacing * 2.0)))
     min_area = spacing * spacing * 0.30
@@ -412,10 +393,7 @@ def _refine_from_secondary_mask(
     return rx, ry
 
 
-def _classify_duration(
-    mask: MatLike, cx: int, cy: int, spacing: float
-) -> DurationClass | None:
-    """Classify note duration based on filled status and stem presence."""
+def _classify_duration(mask: MatLike, cx: int, cy: int, spacing: float) -> DurationClass | None:
     filled = _is_filled(mask, cx, cy, spacing)
     has_stem = _has_stem(mask, cx, cy, spacing)
 
@@ -429,7 +407,6 @@ def _classify_duration(
 
 
 def _is_filled(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    """Check if notehead is filled (black) or hollow (white)."""
     rx = max(2, int(round(spacing * 0.36)))
     ry = max(2, int(round(spacing * 0.28)))
 
@@ -466,7 +443,6 @@ def _is_filled(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
 
 
 def _has_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    """Check if notehead has an attached stem."""
     x_radius = max(2, int(round(spacing * 0.85)))
     y_radius = max(3, int(round(spacing * 2.6)))
 
@@ -496,11 +472,7 @@ def _has_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     return False
 
 
-# Pitch resolution functions
-
-
 def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
-    """Resolve note steps to pitch letters and octaves based on clef."""
     if clef is None or clef.kind is None:
         return
 
@@ -523,7 +495,6 @@ def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
 def _step_to_letter_octave(
     base_letter: str, base_octave: int, step: int
 ) -> tuple[str, int]:
-    """Convert staff step to letter and octave."""
     base_index = LETTER_TO_INDEX[base_letter]
     absolute = base_octave * 7 + base_index + step
     octave = absolute // 7
@@ -532,7 +503,6 @@ def _step_to_letter_octave(
 
 
 def _key_signature_accidentals(key_sig: KeySignature) -> dict[str, str]:
-    """Get accidentals from key signature."""
     accidentals = {}
     fifths = key_sig.fifths if key_sig.fifths is not None else 0
 
