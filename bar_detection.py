@@ -103,40 +103,24 @@ def _contours_to_bars(
         near_right = abs_center >= staff_right - right_margin
         near_left = abs_center <= left_skip + left_margin
         left_relaxed = near_left and w <= left_relaxed_max and density >= 0.50
-
-        if density < BAR_MIN_DENSITY and not left_relaxed:
+        if not left_relaxed and (
+            density < BAR_MIN_DENSITY or (w > max_width and density < 0.75)
+        ):
             continue
-        if w > max_width and density < 0.75 and not left_relaxed:
-            continue
 
-        if w >= min_double_width and near_right:
+        kind_xs = (
+            [("double_left", abs_left), ("double_right", abs_right)]
+            if w >= min_double_width and near_right
+            else [("single", abs_center)]
+        )
+
+        for kind, x_pos in kind_xs:
             bars.append(
                 BarLine(
-                    x=abs_left,
+                    x=x_pos,
                     y_top=y0,
                     y_bottom=y1 - 1,
-                    kind="double_left",
-                    repeat="none",
-                    staff_index=staff_idx,
-                )
-            )
-            bars.append(
-                BarLine(
-                    x=abs_right,
-                    y_top=y0,
-                    y_bottom=y1 - 1,
-                    kind="double_right",
-                    repeat="none",
-                    staff_index=staff_idx,
-                )
-            )
-        else:
-            bars.append(
-                BarLine(
-                    x=abs_center,
-                    y_top=y0,
-                    y_bottom=y1 - 1,
-                    kind="single",
+                    kind=kind,
                     repeat="none",
                     staff_index=staff_idx,
                 )
@@ -211,8 +195,7 @@ def _classify_repeat_markers(
     pair_gap = max(2, int(round(BAR_PAIR_GAP_FRAC * staff.spacing)))
     i = 0
     while i + 1 < len(bars):
-        left = bars[i]
-        right = bars[i + 1]
+        left, right = bars[i], bars[i + 1]
         if (
             left.kind == "double_left"
             and right.kind == "double_right"
@@ -232,18 +215,18 @@ def _classify_repeat_markers(
                 bar_x=right.x,
                 side="right",
             )
-
-            if has_right and not has_left:
-                left.repeat = "begin"
-                right.repeat = "begin"
-            elif has_left and not has_right:
-                left.repeat = "end"
-                right.repeat = "end"
-
+            repeat = (
+                "begin"
+                if has_right and not has_left
+                else "end"
+                if has_left and not has_right
+                else None
+            )
+            if repeat:
+                left.repeat = right.repeat = repeat
             i += 2
-            continue
-
-        i += 1
+        else:
+            i += 1
 
 
 def _has_repeat_dots_on_side(
@@ -255,7 +238,7 @@ def _has_repeat_dots_on_side(
     side: str,
 ) -> bool:
     h, w = roi.shape[:2]
-    if h == 0 or w == 0 or len(staff.lines) < 5:
+    if h == 0 or w == 0:
         return False
 
     search_w = max(4, int(round(staff.spacing * REPEAT_DOT_SEARCH_WIDTH_FRAC)))
