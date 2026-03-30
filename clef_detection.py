@@ -18,6 +18,7 @@ from constants import (
 )
 from schema import ClefDetection, ClefKind
 from symbol_templates import CLEF_BASS, CLEF_TREBLE
+from template_geometry import fit_to_roi, resize_to_height, to_gray
 
 _treble_template = None
 _bass_template = None
@@ -68,13 +69,7 @@ def _load_and_trim(path: Path) -> MatLike:
     img = cv.imread(str(path), cv.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Cannot load clef template: {path}")
-    return _trim_white_border(_to_gray(img))
-
-
-def _to_gray(image: MatLike) -> MatLike:
-    if len(image.shape) == 2:
-        return image
-    return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    return _trim_white_border(to_gray(img))
 
 
 def _trim_white_border(gray: MatLike, thresh: int = CLEF_TRIM_WHITE_THRESH) -> MatLike:
@@ -89,7 +84,7 @@ def _trim_white_border(gray: MatLike, thresh: int = CLEF_TRIM_WHITE_THRESH) -> M
 
 
 def _prepare_roi(clef_key_crop: MatLike) -> MatLike | None:
-    gray = _to_gray(clef_key_crop)
+    gray = to_gray(clef_key_crop)
     gray = cv.bitwise_not(gray)
     width = gray.shape[1]
     roi = gray[:, : max(1, int(width * CLEF_ROI_WIDTH_FRAC))]
@@ -156,8 +151,8 @@ def _multi_scale_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
 
     for scale_frac in CLEF_MATCH_SCALES:
         target_h = max(12, min(roi_h - 1, int(round(roi_h * scale_frac))))
-        scaled = _resize_to_height(template, target_h)
-        scaled = _fit_to_roi(scaled, roi_h, roi_w)
+        scaled = resize_to_height(template, target_h)
+        scaled = fit_to_roi(scaled, roi_h, roi_w)
         sh, sw = scaled.shape[:2]
 
         if sh < 4 or sw < 4 or sh > roi_h or sw > roi_w:
@@ -171,24 +166,3 @@ def _multi_scale_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
             best_rect = (int(max_loc[0]), int(max_loc[1]), sw, sh)
 
     return best_score, best_rect
-
-
-def _resize_to_height(template: MatLike, target_h: int) -> MatLike:
-    th, tw = template.shape[:2]
-    if th < 1 or target_h < 1:
-        return template
-    scale = target_h / th
-    new_w = max(1, int(round(tw * scale)))
-    new_h = max(1, int(round(th * scale)))
-    interp = cv.INTER_AREA if scale < 1.0 else cv.INTER_CUBIC
-    return cv.resize(template, (new_w, new_h), interpolation=interp)
-
-
-def _fit_to_roi(template: MatLike, roi_h: int, roi_w: int) -> MatLike:
-    th, tw = template.shape[:2]
-    if th <= roi_h and tw <= roi_w:
-        return template
-    scale = max(min((roi_h - 1) / th, (roi_w - 1) / tw) * 0.99, 1e-3)
-    new_w = max(1, int(round(tw * scale)))
-    new_h = max(1, int(round(th * scale)))
-    return cv.resize(template, (new_w, new_h), interpolation=cv.INTER_AREA)

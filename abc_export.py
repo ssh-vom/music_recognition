@@ -2,9 +2,8 @@
 
 from pathlib import Path
 
+from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
 from schema import BarLine
-
-EVENT_X_TOLERANCE_PX = 5
 BEAM_BREAK_EPSILON = 1e-6
 
 
@@ -132,7 +131,7 @@ def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals):
     if not notes:
         return []
 
-    events = _group_notes_into_events(notes)
+    events = group_notes_into_events(notes, x_tol=EVENT_X_TOLERANCE_PX)
     if not events:
         return []
 
@@ -186,24 +185,6 @@ def _format_tokens_with_beams(event_tokens, beats):
         formatted.append(beam_run)
 
     return formatted
-
-
-def _group_notes_into_events(notes):
-    ordered = sorted(notes, key=lambda note: (note.center_x, note.center_y))
-    events = []
-
-    for note in ordered:
-        if not events:
-            events.append([note])
-            continue
-        last_event = events[-1]
-        anchor_x = round(sum(n.center_x for n in last_event) / float(len(last_event)))
-        if abs(note.center_x - anchor_x) <= EVENT_X_TOLERANCE_PX:
-            last_event.append(note)
-        else:
-            events.append([note])
-
-    return events
 
 
 def _event_to_abc_pitch(event_notes, key_accidentals):

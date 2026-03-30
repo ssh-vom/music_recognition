@@ -279,10 +279,10 @@ def draw_clef_overlay(clef_crop: MatLike, detection: ClefDetection, clef_kind: s
 
     cv.rectangle(overlay, (0, 0), (overlay.shape[1], overlay.shape[0]), (100, 100, 100), 1)
 
-    choice = _choose_clef_overlay_rect(clef_kind, detection)
+    choice = choose_clef_overlay_rect(clef_kind, detection)
     if choice is not None:
         rect, color = choice
-        _draw_overlay_box(overlay, rect, color, thickness=3)
+        draw_clef_match_box(overlay, rect, color, thickness=3)
 
     name = clef_kind if clef_kind else "?"
     label = f"{name}  T={detection.letter_score_treble:.2f} B={detection.letter_score_bass:.2f}"
@@ -291,13 +291,23 @@ def draw_clef_overlay(clef_crop: MatLike, detection: ClefDetection, clef_kind: s
     return overlay
 
 
-def _choose_clef_overlay_rect(clef_kind: str, detection: ClefDetection):
-    if clef_kind == "treble" and detection.treble_match_top_left is not None and detection.treble_match_size is not None:
+def choose_clef_overlay_rect(
+    clef_kind: str | None, detection: ClefDetection
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int]] | None:
+    if (
+        clef_kind == "treble"
+        and detection.treble_match_top_left is not None
+        and detection.treble_match_size is not None
+    ):
         x, y = detection.treble_match_top_left
         w, h = detection.treble_match_size
         return (x, y, w, h), (0, 200, 100)
 
-    if clef_kind == "bass" and detection.bass_match_top_left is not None and detection.bass_match_size is not None:
+    if (
+        clef_kind == "bass"
+        and detection.bass_match_top_left is not None
+        and detection.bass_match_size is not None
+    ):
         x, y = detection.bass_match_top_left
         w, h = detection.bass_match_size
         return (x, y, w, h), (0, 120, 255)
@@ -310,11 +320,25 @@ def _choose_clef_overlay_rect(clef_kind: str, detection: ClefDetection):
     return None
 
 
-def _draw_overlay_box(image: MatLike, rect: tuple, color: tuple, *, thickness: int = 3):
+def draw_clef_match_box(
+    image: MatLike,
+    rect: tuple,
+    color: tuple,
+    *,
+    origin_x: int = 0,
+    origin_y: int = 0,
+    thickness: int = 3,
+) -> None:
     x, y, w, h = rect
     if w < 2 or h < 2:
         return
-    cv.rectangle(image, (x, y), (x + w - 1, y + h - 1), color, thickness)
+    cv.rectangle(
+        image,
+        (origin_x + x, origin_y + y),
+        (origin_x + x + w - 1, origin_y + y + h - 1),
+        color,
+        thickness,
+    )
 
 
 def draw_measure_boundaries(image: MatLike, measures_map: dict[int, list]) -> MatLike:

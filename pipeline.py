@@ -12,9 +12,8 @@ from accidental_detection import detect_key_signature_accidentals
 from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
 from clef_detection import detect_clef
+from detection_logs import abc_key_from_score, detection_logs_text, meter_from_score
 from constants import (
-    DEFAULT_KEY,
-    DEFAULT_METER,
     DEFAULT_TEMPO_QPM,
     DEFAULT_TITLE,
     DEFAULT_UNIT_NOTE_LENGTH,
@@ -46,7 +45,9 @@ from staff_detection import (
     to_gray,
 )
 from visualization import (
+    choose_clef_overlay_rect,
     draw_bars_overlay,
+    draw_clef_match_box,
     save_accidental_visualization,
     save_bar_visualization,
     save_clef_visualization,
@@ -166,15 +167,11 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     artifacts.write_text(
         artifacts.sections.logs,
         "detections.txt",
-        _build_clef_log(score)
-        + _build_accidental_log(score)
-        + _build_key_signature_log(score)
-        + _build_time_signature_log(score)
-        + _build_note_log(score),
+        detection_logs_text(score),
     )
 
-    meter = _meter_from_score(score)
-    key = _abc_key_from_score(score)
+    meter = meter_from_score(score)
+    key = abc_key_from_score(score)
     abc_path = artifacts.path(artifacts.sections.export, "output.abc")
     write_abc_file(
         score_tree=score, output_path=abc_path,
@@ -627,10 +624,10 @@ def _create_full_overlays(
         x2, y2 = clef.x_end, clef.y_bottom
         cv.rectangle(clef_overlay, (x1, y1), (x2, y2), (100, 100, 100), 1)
 
-        choice = _choose_clef_overlay_rect(clef, det)
+        choice = choose_clef_overlay_rect(clef.kind, det)
         if choice is not None:
             rect, color = choice
-            _draw_overlay_box(clef_overlay, rect, color, origin_x=x1, origin_y=y1)
+            draw_clef_match_box(clef_overlay, rect, color, origin_x=x1, origin_y=y1)
 
         name = clef.kind if clef.kind else "?"
         label = f"Staff {staff_index}: {name}  T={det.letter_score_treble:.2f} B={det.letter_score_bass:.2f}"
@@ -644,129 +641,3 @@ def _create_full_overlays(
         cv.putText(clef_overlay, label, (tx + pad, ty), font, 0.55, (25, 25, 25), 2, cv.LINE_AA)
 
     artifacts.write_image(artifacts.sections.clef, "03_full_clef_overlay.jpg", clef_overlay)
-
-
-def _choose_clef_overlay_rect(clef: Clef, detection: ClefDetection):
-    if (
-        clef.kind == "treble"
-        and detection.treble_match_top_left is not None
-        and detection.treble_match_size is not None
-    ):
-        x, y = detection.treble_match_top_left
-        w, h = detection.treble_match_size
-        return (x, y, w, h), (0, 200, 100)
-    if (
-        clef.kind == "bass"
-        and detection.bass_match_top_left is not None
-        and detection.bass_match_size is not None
-    ):
-        x, y = detection.bass_match_top_left
-        w, h = detection.bass_match_size
-        return (x, y, w, h), (0, 120, 255)
-    if detection.treble_match_top_left is not None and detection.treble_match_size is not None:
-        x, y = detection.treble_match_top_left
-        w, h = detection.treble_match_size
-        return (x, y, w, h), (180, 180, 180)
-    return None
-
-
-def _draw_overlay_box(image, rect, color, *, origin_x: int = 0, origin_y: int = 0, thickness: int = 3):
-    x, y, w, h = rect
-    if w < 2 or h < 2:
-        return
-    cv.rectangle(
-        image,
-        (origin_x + x, origin_y + y),
-        (origin_x + x + w - 1, origin_y + y + h - 1),
-        color,
-        thickness,
-    )
-
-
-def _build_clef_log(score: Score) -> str:
-    lines = []
-    for staff_index, det in score.clef_detections.items():
-        lines.append(
-            f"staff {staff_index}: {det.clef!r}  "
-            f"letter T/B={det.letter_score_treble:.3f}/{det.letter_score_bass:.3f}  "
-            f"slide T/B={det.slide_score_treble:.3f}/{det.slide_score_bass:.3f}\n"
-        )
-    return "".join(lines)
-
-
-def _build_accidental_log(score: Score) -> str:
-    clef = score.clefs.get(0)
-    if clef is None:
-        return "staff 0 header accidentals: sharps=0 flats=0 total=0\n"
-
-    glyphs = clef.key_header_glyphs
-    sharps = sum(1 for g in glyphs if g.kind == "sharp")
-    flats = sum(1 for g in glyphs if g.kind == "flat")
-    lines = [f"staff 0 header accidentals: sharps={sharps} flats={flats} total={len(glyphs)}\n"]
-    for g in glyphs:
-        lines.append(f"  kind={g.kind:<5} x={g.center_x:>4}, y={g.center_y:>4}, conf={g.confidence:.3f}\n")
-    return "".join(lines)
-
-
-def _build_time_signature_log(score: Score) -> str:
-    clef = score.clefs.get(0)
-    if clef is None:
-        return "staff 0 time signature: ?\n"
-    ts = clef.time_signature
-    if ts.numerator is None or ts.denominator is None:
-        return "staff 0 time signature: ?\n"
-    return f"staff 0 time signature: {ts.numerator}/{ts.denominator}\n"
-
-
-def _build_key_signature_log(score: Score) -> str:
-    if score.clefs.get(0) is None:
-        return "staff 0 key signature: C\n"
-    return f"staff 0 key signature: {_abc_key_from_score(score)}\n"
-
-
-def _meter_from_score(score: Score) -> str:
-    clef = score.clefs.get(0)
-    if clef is None:
-        return DEFAULT_METER
-    ts = clef.time_signature
-    if ts.numerator is None or ts.denominator is None:
-        return DEFAULT_METER
-    return f"{ts.numerator}/{ts.denominator}"
-
-
-def _abc_key_from_score(score: Score) -> str:
-    clef = score.clefs.get(0)
-    if clef is None or clef.key_signature.fifths is None:
-        return DEFAULT_KEY
-    return _abc_key_from_fifths(clef.key_signature.fifths)
-
-
-def _abc_key_from_fifths(fifths: int) -> str:
-    major_keys = {
-        -7: "Cb", -6: "Gb", -5: "Db", -4: "Ab", -3: "Eb", -2: "Bb", -1: "F",
-        0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#",
-    }
-    return major_keys.get(fifths, DEFAULT_KEY)
-
-
-def _build_note_log(score: Score) -> str:
-    notes_by_measure: dict[tuple[int, int], list] = {}
-    for note in score.notes:
-        notes_by_measure.setdefault((note.staff_index, note.measure_index), []).append(note)
-
-    lines = []
-    for staff_index in range(len(score.staffs)):
-        for measure_index, _ in enumerate(score.get_measures_for_staff(staff_index)):
-            notes = notes_by_measure.get((staff_index, measure_index), [])
-            lines.append(f"staff {staff_index}, measure {measure_index}: {len(notes)} noteheads detected\n")
-            for note in notes:
-                pitch = (
-                    f"{note.pitch_letter}{note.octave}"
-                    if note.pitch_letter is not None and note.octave is not None
-                    else "?"
-                )
-                lines.append(
-                    f"  x={note.center_x:>4}, y={note.center_y:>4}, step={note.step:>3}, "
-                    f"conf={note.step_confidence or '?':<6}, pitch={pitch:<4}, duration={note.duration_class or '?'}\n"
-                )
-    return "".join(lines)

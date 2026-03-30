@@ -4,9 +4,8 @@ import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
+from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
 from schema import DurationClass, Note, Staff
-
-EVENT_X_TOLERANCE_PX = 5
 COMPACT_GAP_MIN_FRAC = 1.2
 COMPACT_GAP_MAX_FRAC = 3.6
 COMPACT_RUN_MIN_EVENTS = 4
@@ -49,7 +48,7 @@ def _apply_compact_spacing_fallback(notes: list[Note], spacing: float) -> None:
     if len(notes) < COMPACT_RUN_MIN_EVENTS:
         return
 
-    events = _group_notes_into_events(notes, x_tol=EVENT_X_TOLERANCE_PX)
+    events = group_notes_into_events(notes, x_tol=EVENT_X_TOLERANCE_PX)
     if len(events) < COMPACT_RUN_MIN_EVENTS:
         return
 
@@ -83,24 +82,6 @@ def _apply_compact_spacing_fallback(notes: list[Note], spacing: float) -> None:
                         note.duration_class = "eighth"
 
         start = end + 1
-
-
-def _group_notes_into_events(notes: list[Note], x_tol: int) -> list[list[Note]]:
-    ordered = sorted(notes, key=lambda note: (note.center_x, note.center_y))
-    events: list[list[Note]] = []
-
-    for note in ordered:
-        if not events:
-            events.append([note])
-            continue
-        last_event = events[-1]
-        anchor_x = round(sum(n.center_x for n in last_event) / float(len(last_event)))
-        if abs(note.center_x - anchor_x) <= x_tol:
-            last_event.append(note)
-        else:
-            events.append([note])
-
-    return events
 
 
 def _run_can_be_eighths(run_events: list[list[Note]], spacing: float) -> bool:

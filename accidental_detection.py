@@ -8,6 +8,7 @@ from cv2.typing import MatLike
 
 from schema import Accidental
 from symbol_templates import ACCIDENTAL_FLAT, ACCIDENTAL_SHARP
+from template_geometry import fit_to_roi, resize_to_height, to_gray
 
 _SHARP_TEMPLATE = None
 _FLAT_TEMPLATE = None
@@ -31,13 +32,7 @@ def _load_template(path: Path) -> MatLike:
     image = cv.imread(str(path), cv.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"Cannot read accidental template: {path}")
-    return _to_gray(image)
-
-
-def _to_gray(image: MatLike) -> MatLike:
-    if len(image.shape) == 2:
-        return image
-    return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    return to_gray(image)
 
 
 def detect_measure_accidentals(
@@ -140,8 +135,8 @@ def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
     for kind, template in [("sharp", sharp_template), ("flat", flat_template)]:
         for frac in SCALE_FRACTIONS:
             target_h = max(4, int(round(spacing * frac)))
-            scaled = _resize_to_height(template, target_h)
-            scaled = _fit_to_roi(scaled, roi.shape[0], roi.shape[1])
+            scaled = resize_to_height(template, target_h)
+            scaled = fit_to_roi(scaled, roi.shape[0], roi.shape[1])
             th, tw = scaled.shape[:2]
 
             if th < 3 or tw < 3:
@@ -201,27 +196,6 @@ def _count_index_clusters(indices: list[int], max_gap: int = 1) -> int:
             clusters += 1
         prev = value
     return clusters
-
-
-def _resize_to_height(template_gray: MatLike, target_h: int) -> MatLike:
-    th, tw = template_gray.shape[:2]
-    if th < 1 or target_h < 1:
-        return template_gray
-    scale = target_h / th
-    new_w = max(1, int(round(tw * scale)))
-    new_h = max(1, int(round(th * scale)))
-    interp = cv.INTER_AREA if scale < 1.0 else cv.INTER_CUBIC
-    return cv.resize(template_gray, (new_w, new_h), interpolation=interp)
-
-
-def _fit_to_roi(template_gray: MatLike, roi_h: int, roi_w: int) -> MatLike:
-    th, tw = template_gray.shape[:2]
-    if th <= 0 or tw <= 0 or (th <= roi_h and tw <= roi_w):
-        return template_gray
-    scale = max(min((roi_h - 1) / th, (roi_w - 1) / tw) * 0.99, 1e-3)
-    new_w = max(1, int(round(tw * scale)))
-    new_h = max(1, int(round(th * scale)))
-    return cv.resize(template_gray, (new_w, new_h), interpolation=cv.INTER_AREA)
 
 
 def _gather_peaks(result: MatLike, threshold: float, min_dist: int, tw: int, th: int) -> list[tuple]:
