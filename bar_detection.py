@@ -1,6 +1,7 @@
 """Bar line detection - find vertical lines separating measures."""
 
 import cv2 as cv
+import numpy as np
 from cv2.typing import MatLike
 
 from constants import (
@@ -17,6 +18,13 @@ from constants import (
     BAR_RIGHT_MARGIN_FRAC,
     BAR_SEARCH_LEFT_SKIP_FRAC,
     BAR_SEARCH_LEFT_SKIP_OTHER_FRAC,
+    REPEAT_DOT_BAR_GAP_FRAC,
+    REPEAT_DOT_MAX_AREA_FRAC,
+    REPEAT_DOT_MAX_SIZE_FRAC,
+    REPEAT_DOT_MIN_AREA_FRAC,
+    REPEAT_DOT_SEARCH_WIDTH_FRAC,
+    REPEAT_DOT_X_ALIGNMENT_FRAC,
+    REPEAT_DOT_Y_TOLERANCE_FRAC,
 )
 from schema import BarLine, Staff
 
@@ -51,7 +59,9 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     contours, _ = cv.findContours(joined, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
     bars = _contours_to_bars(contours, staff, left_skip, staff_h, y0, y1, staff_idx)
-    return _merge_and_classify_pairs(bars, staff, staff_idx)
+    bars = _merge_and_classify_pairs(bars, staff, staff_idx)
+    _classify_repeat_markers(roi=roi, bars=bars, staff=staff, y0=y0)
+    return bars
 
 
 def _contours_to_bars(
@@ -190,3 +200,118 @@ def _merge_and_classify_pairs(
         i += 1
 
     return result
+
+
+def _classify_repeat_markers(
+    *, roi: MatLike, bars: list[BarLine], staff: Staff, y0: int
+) -> None:
+    if len(bars) < 2:
+        return
+
+    pair_gap = max(2, int(round(BAR_PAIR_GAP_FRAC * staff.spacing)))
+    i = 0
+    while i + 1 < len(bars):
+        left = bars[i]
+        right = bars[i + 1]
+        if (
+            left.kind == "double_left"
+            and right.kind == "double_right"
+            and right.x - left.x <= pair_gap
+        ):
+            has_left = _has_repeat_dots_on_side(
+                roi=roi,
+                staff=staff,
+                y0=y0,
+                bar_x=left.x,
+                side="left",
+            )
+            has_right = _has_repeat_dots_on_side(
+                roi=roi,
+                staff=staff,
+                y0=y0,
+                bar_x=right.x,
+                side="right",
+            )
+
+            if has_right and not has_left:
+                left.repeat = "begin"
+                right.repeat = "begin"
+            elif has_left and not has_right:
+                left.repeat = "end"
+                right.repeat = "end"
+
+            i += 2
+            continue
+
+        i += 1
+
+
+def _has_repeat_dots_on_side(
+    *,
+    roi: MatLike,
+    staff: Staff,
+    y0: int,
+    bar_x: int,
+    side: str,
+) -> bool:
+    h, w = roi.shape[:2]
+    if h == 0 or w == 0 or len(staff.lines) < 5:
+        return False
+
+    search_w = max(4, int(round(staff.spacing * REPEAT_DOT_SEARCH_WIDTH_FRAC)))
+    gap = max(1, int(round(staff.spacing * REPEAT_DOT_BAR_GAP_FRAC)))
+
+    if side == "left":
+        x0 = max(0, bar_x - gap - search_w)
+        x1 = max(x0 + 1, min(w, bar_x - gap))
+    else:
+        x0 = max(0, bar_x + gap)
+        x1 = max(x0 + 1, min(w, bar_x + gap + search_w))
+
+    if x1 - x0 < 2:
+        return False
+
+    window = roi[:, x0:x1]
+    binary = ((window > 0).astype(np.uint8)) * 255
+    count, _, stats, centroids = cv.connectedComponentsWithStats(binary, connectivity=8)
+
+    min_area = max(
+        1, int(round(staff.spacing * staff.spacing * REPEAT_DOT_MIN_AREA_FRAC))
+    )
+    max_area = max(
+        2, int(round(staff.spacing * staff.spacing * REPEAT_DOT_MAX_AREA_FRAC))
+    )
+    max_size = max(2, int(round(staff.spacing * REPEAT_DOT_MAX_SIZE_FRAC)))
+
+    line_mid = int(round(staff.lines[2].y - y0))
+    expected_top = line_mid - int(round(staff.spacing * 0.5))
+    expected_bottom = line_mid + int(round(staff.spacing * 0.5))
+    y_tol = max(2, int(round(staff.spacing * REPEAT_DOT_Y_TOLERANCE_FRAC)))
+    x_align_tol = max(2, int(round(staff.spacing * REPEAT_DOT_X_ALIGNMENT_FRAC)))
+
+    candidates: list[tuple[int, int]] = []
+    for i in range(1, count):
+        area = int(stats[i, cv.CC_STAT_AREA])
+        comp_w = int(stats[i, cv.CC_STAT_WIDTH])
+        comp_h = int(stats[i, cv.CC_STAT_HEIGHT])
+        if area < min_area or area > max_area:
+            continue
+        if comp_w > max_size or comp_h > max_size:
+            continue
+        cx = int(round(float(centroids[i][0])))
+        cy = int(round(float(centroids[i][1])))
+        candidates.append((cx, cy))
+
+    if len(candidates) < 2:
+        return False
+
+    top = [p for p in candidates if abs(p[1] - expected_top) <= y_tol]
+    bottom = [p for p in candidates if abs(p[1] - expected_bottom) <= y_tol]
+    if not top or not bottom:
+        return False
+
+    for tx, _ in top:
+        for bx, _ in bottom:
+            if abs(tx - bx) <= x_align_tol:
+                return True
+    return False
