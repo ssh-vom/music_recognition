@@ -32,8 +32,8 @@ def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
     treble_score, treble_rect = _letterbox_match(roi, treble_template)
     bass_score, bass_rect = _letterbox_match(roi, bass_template)
 
-    slide_treble, _ = _multi_scale_match(roi, treble_template)
-    slide_bass, _ = _multi_scale_match(roi, bass_template)
+    slide_treble = _multi_scale_match(roi, treble_template)
+    slide_bass = _multi_scale_match(roi, bass_template)
 
     clef, confidence = _select_clef(treble_score, bass_score)
 
@@ -142,10 +142,9 @@ def _letterbox_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
     return float(result[0, 0]), (x0, y0, x1 - x0, y1 - y0)
 
 
-def _multi_scale_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
+def _multi_scale_match(roi: MatLike, template: MatLike) -> float:
     roi_h, roi_w = roi.shape[:2]
     best_score = 0.0
-    best_rect = (0, 0, 0, 0)
 
     for scale_frac in CLEF_MATCH_SCALES:
         target_h = max(12, min(roi_h - 1, int(round(roi_h * scale_frac))))
@@ -157,10 +156,9 @@ def _multi_scale_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
             continue
 
         result = cv.matchTemplate(roi, scaled, cv.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv.minMaxLoc(result)
+        _, max_val, _, _ = cv.minMaxLoc(result)
 
         if max_val > best_score:
             best_score = float(max_val)
-            best_rect = (int(max_loc[0]), int(max_loc[1]), sw, sh)
 
-    return best_score, best_rect
+    return best_score
