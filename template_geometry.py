@@ -24,4 +24,4 @@ def fit_to_roi(template: MatLike, roi_h: int, roi_w: int) -> MatLike:
     scale = max(min((roi_h - 1) / th, (roi_w - 1) / tw) * 0.99, 1e-3)  # scale factor
     new_w = max(1, int(round(tw * scale)))  # resize width
     new_h = max(1, int(round(th * scale)))  # resize height
-   return cv.resize(template, (new_w, new_h), interpolation=cv.INTER_AREA)# resize
+    return cv.resize(template, (new_w, new_h), interpolation=cv.INTER_AREA)

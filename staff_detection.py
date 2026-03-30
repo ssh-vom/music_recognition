@@ -17,7 +17,6 @@ from constants import (
     STAFF_ERASE_BAND_FRAC,
     STAFF_LINE_KERNEL_MIN_WIDTH,
     STAFF_LINE_KERNEL_WIDTH_FRAC,
-    STAFF_RECONSTRUCTION_WIDTH_FRAC,
     STAFF_SPACING_TOLERANCE_FRAC,
     STAFF_SPACING_TOLERANCE_MIN,
     STAFF_VERTICAL_PADDING_FRAC,
@@ -26,12 +25,17 @@ from image_utils import to_gray
 from schema import Staff, StaffLine
 
 
-def find_staves(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
-    gray = to_gray(image)
-    binary = binarize(gray)
-    line_mask = extract_horizontal_lines(binary)
-    centers = find_line_centers(line_mask)
-    staffs = group_into_staves(centers, line_mask, binary.shape)
+def find_staffs(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
+    """
+    Pipeline for finding the staff lines in sheet music.
+    We return the staff lines, the binary image of extraction and the mask used
+    for ease of visualiation/debugging in the report.
+    """
+    gray = to_gray(image)  # convert to grayscale
+    binary = binarize(gray)  # binarize the grayscale image
+    line_mask = extract_horizontal_lines(binary)  # extract horizontal lines
+    centers = find_line_centers(line_mask)  # find the centers of the staff lines
+    staffs = group_into_staffs(centers, line_mask, binary.shape)  # group into staffs
     return staffs, binary, line_mask
 
 
@@ -86,7 +90,7 @@ def _cluster_rows(rows: np.ndarray, max_gap: int = LINE_CLUSTER_MAX_GAP) -> list
     return centers
 
 
-def group_into_staves(
+def group_into_staffs(
     line_centers: list[int], line_mask: MatLike, shape: tuple
 ) -> list[Staff]:
     staffs = []

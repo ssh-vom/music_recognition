@@ -1,9 +1,15 @@
-"""Split staves into individual measures using bar line positions."""
+"""
+Split staff lines into measures based on the barlines in bar_detection.py
+We use the location of the bar lines to determine the start and end of each measure,
+and split the staff lines into each measure to figure out which notes go where.
+"""
 
 from cv2.typing import MatLike
 
-from schema import Clef, KeySignature, Measure, TimeSignature
+from schema import Clef, KeySignature, Measure, TimeSignature, BarLine
+from collections import defaultdict
 
+# Constants specific to staff splitting algorithm
 LEFT_HEADER_SPACINGS = 7.0
 BAR_TRIM_RATIO = 0.25
 MIN_WIDTH_PX = 4
@@ -16,10 +22,14 @@ def split_measures(
     left_header_spacings: float = LEFT_HEADER_SPACINGS,
     first_staff_conservative_spacings: float = 7.0,
 ) -> dict[int, list[Measure]]:
+    # Get the barlines grouped by staff
     barlines_by_staff = _group_barlines_by_staff(bars, len(staffs))
-    measures_map = {}
+    measures_map = {}  # map staff index to list of measures
 
     for staff_index, staff in enumerate(staffs):
+        # split each staff based on it's index, and any left side spacing we need to crop out
+        # this is to avoid any clefs or other artifacts like key or time signature from getting
+        # in the way of our measure splitting
         measures_map[staff_index] = _split_staff(
             staff=staff,
             staff_index=staff_index,
@@ -27,21 +37,24 @@ def split_measures(
             left_header_spacings=left_header_spacings,
         )
 
+    # if we have the first staff index, we want to start after the clef/time signature
     if 0 in measures_map:
-        _apply_first_staff_start_policy(
-            measures_map, staffs, first_staff_conservative_spacings
+        first_staff = staffs[0]
+        safe_starting_point = _staff_left(first_staff) + int(
+            round(first_staff.spacing * first_staff_conservative_spacings)
         )
-
+        measures_map[0][0].x_start = max(
+            measures_map[0][0].x_start, safe_starting_point
+        )
     return measures_map
 
 
-def _group_barlines_by_staff(bars: list, num_staffs: int) -> dict[int, list]:
-    grouped = {i: [] for i in range(num_staffs)}
+def _group_barlines_by_staff(bars: list[BarLine], num_staffs: int) -> dict[int, list]:
+    grouped = defaultdict(list)
     for bar in bars:
-        if 0 <= bar.staff_index < num_staffs:
-            grouped[bar.staff_index].append(bar)
-    for staff_bars in grouped.values():
-        staff_bars.sort(key=lambda b: b.x)
+        grouped[bar.staff_index].append(bar)
+    for staff in range(num_staffs):
+        grouped[staff].sort(key=lambda b: b.x)
     return grouped
 
 
@@ -69,8 +82,10 @@ def _usable_bars(staff_bars: list, content_start_x: int, staff_right: int) -> li
 
 
 def _build_measure(x_start: int, x_end: int, staff, staff_index: int) -> Measure | None:
+    # check minimum width to be considered a measure
     if x_end - x_start < MIN_WIDTH_PX:
         return None
+    # creat the object
     return Measure(
         x_start=x_start,
         x_end=x_end,
@@ -112,8 +127,6 @@ def _split_staff(
                 and usable_bars[index + 1].kind == "double_right"
             ):
                 continue
-        elif bar.kind not in {"single", "double_right"}:
-            raise ValueError(f"Unknown bar kind: {bar.kind}")
 
         measure = _build_measure(current_start, bar.x - trim, staff, staff_index)
         if measure is not None:
@@ -128,18 +141,6 @@ def _split_staff(
         measures.append(final_measure)
 
     return measures
-
-
-def _apply_first_staff_start_policy(
-    measures_map: dict[int, list[Measure]], staffs: list, spacings: float
-) -> None:
-    if 0 not in measures_map or not measures_map[0]:
-        return
-    first_staff = staffs[0]
-    conservative_start = _staff_left(first_staff) + int(
-        round(first_staff.spacing * spacings)
-    )
-    measures_map[0][0].x_start = max(measures_map[0][0].x_start, conservative_start)
 
 
 def crop_measures(
@@ -164,10 +165,8 @@ def crop_measures(
 def extract_clef_regions(staffs: list) -> dict[int, Clef]:
     clef_by_staff = {}
     for staff_index, staff in enumerate(staffs):
-        assert staff.lines
         x_start = _staff_left(staff)
         x_end = _content_start_x(staff)
-        assert x_end > x_start
         clef_by_staff[staff_index] = Clef(
             staff_index=staff_index,
             kind=None,

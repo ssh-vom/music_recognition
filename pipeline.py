@@ -38,7 +38,7 @@ from score_tree import build_score
 from staff_detection import (
     erase_staff_for_bars,
     erase_staff_for_notes,
-    find_staves,
+    find_staffs,
 )
 from visualization import (
     choose_clef_overlay_rect,
@@ -62,7 +62,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         raise FileNotFoundError(f"Could not load image: {image_path}")
 
     print("Detecting staff lines...")
-    staffs, binary, line_mask = find_staves(raw_bgr)
+    staffs, binary, line_mask = find_staffs(raw_bgr)
     gray = to_gray(raw_bgr)
     staff_intermediates = save_staff_detection(
         image=raw_bgr,
