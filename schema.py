@@ -1,4 +1,15 @@
-"""Data model for sheet music - flat structure."""
+"""
+Flattened Tree Structure of the notes
+described further in score_tree.py
+These support the detections we need for each of the different components
+
+Staffs,
+Clefs,
+Bars,
+Measures,
+Notes,
+Duration
+"""
 
 from dataclasses import dataclass, field
 from typing import Literal
