@@ -149,11 +149,22 @@ def find_notes(
 
     notes = []
     for cx, cy, _ in merged:
-        step_float = (bottom_line_y - cy) / half_step
+        # Classify duration first to detect hollow noteheads
+        duration = _classify_duration(mask, cx, cy, staff.spacing)
+        
+        # For hollow noteheads (half/whole), centroid tends to be biased
+        # upward due to the empty center. Apply a small correction.
+        # This correction compensates for the geometric center of hollow ovals
+        # being higher than the visual center due to ink distribution.
+        cy_adjusted = cy
+        if duration in ("half", "whole"):
+            # Conservative correction: 0.15 * spacing instead of 0.25
+            cy_adjusted = cy + int(round(staff.spacing * 0.15))
+        
+        step_float = (bottom_line_y - cy_adjusted) / half_step
         step = _quantize_step(step_float)
         residual = abs(step_float - step)
         confidence = _step_confidence(residual)
-        duration = _classify_duration(mask, cx, cy, staff.spacing)
 
         notes.append(
             Note(
@@ -161,7 +172,7 @@ def find_notes(
                 staff_index=measure.staff_index,
                 measure_index=measure_index,
                 center_x=cx,
-                center_y=cy,
+                center_y=cy,  # Keep original cy for visualization
                 step=step,
                 step_confidence=confidence,
                 duration_class=duration,
@@ -169,7 +180,7 @@ def find_notes(
         )
 
     notes.sort(key=lambda n: n.center_x)
-    final_notes = _collapse_duplicates(notes, staff.spacing)
+    final_notes = _collapse_duplicates(notes, staff.spacing, mask)
 
     if intermediates is not None:
         intermediates["final_notes"] = final_notes
@@ -309,7 +320,7 @@ def _augment_from_stems(
     return augmented
 
 
-def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
+def _collapse_duplicates(notes: list[Note], spacing: float, mask: MatLike | None = None) -> list[Note]:
     if len(notes) < 2:
         return notes
 
@@ -321,6 +332,7 @@ def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
     for note in notes[1:]:
         prev = collapsed[-1]
 
+        # Original condition: both have no duration assigned
         is_duplicate = (
             prev.duration_class is None
             and note.duration_class is None
@@ -328,8 +340,21 @@ def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
             and abs(note.center_y - prev.center_y) <= y_tol
             and abs(note.step - prev.step) <= 1
         )
+        
+        # New condition: two filled noteheads without stems at same position
+        # likely form a hollow notehead (whole/half) that was split
+        # Only merge if they're close (hollow center gap is typically < 1.8 * spacing)
+        hollow_x_tol = max(2, int(round(spacing * 1.8)))
+        is_hollow_pair = (
+            prev.duration_class in ("quarter", "whole")
+            and note.duration_class in ("quarter", "whole")
+            and abs(note.center_x - prev.center_x) <= hollow_x_tol
+            and abs(note.center_y - prev.center_y) <= y_tol
+            and abs(note.step - prev.step) <= 1
+            and _is_likely_hollow_split(mask, prev, note, spacing)
+        )
 
-        if is_duplicate:
+        if is_duplicate or is_hollow_pair:
             prev.center_x = int(round((prev.center_x + note.center_x) / 2.0))
             prev.center_y = int(round((prev.center_y + note.center_y) / 2.0))
             prev.step = int(round((prev.step + note.step) / 2.0))
@@ -338,10 +363,52 @@ def _collapse_duplicates(notes: list[Note], spacing: float) -> list[Note]:
                 if prev.step_confidence == "high"
                 else note.step_confidence
             )
+            # If we're merging two filled components, this is likely a whole note
+            # that was split by its hollow center
+            if is_hollow_pair:
+                prev.duration_class = "whole"
         else:
             collapsed.append(note)
 
     return collapsed
+
+
+def _is_likely_hollow_split(
+    mask: MatLike | None, 
+    note1: Note, 
+    note2: Note, 
+    spacing: float
+) -> bool:
+    """Check if two close noteheads are likely halves of a hollow notehead."""
+    if mask is None:
+        # Without mask, use distance heuristic: hollow notehead halves are 
+        # typically 0.5-1.5x spacing apart
+        dist = abs(note1.center_x - note2.center_x)
+        return spacing * 0.4 <= dist <= spacing * 1.5
+    
+    # Check if there's a gap (white space) between the two components
+    # This indicates a hollow center
+    x1 = min(note1.center_x, note2.center_x)
+    x2 = max(note1.center_x, note2.center_x)
+    y_mid = (note1.center_y + note2.center_y) // 2
+    
+    # Sample the region between the two noteheads
+    mid_x = (x1 + x2) // 2
+    roi_y_start = max(0, y_mid - int(spacing * 0.3))
+    roi_y_end = min(mask.shape[0], y_mid + int(spacing * 0.3))
+    roi_x_start = max(0, mid_x - 2)
+    roi_x_end = min(mask.shape[1], mid_x + 3)
+    
+    if roi_y_start >= roi_y_end or roi_x_start >= roi_x_end:
+        return False
+        
+    roi = mask[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+    if roi.size == 0:
+        return False
+    
+    # If the middle region has low ink density, it's likely hollow
+    ink_ratio = cv.countNonZero(roi) / float(roi.size)
+    return ink_ratio < 0.3  # Less than 30% ink suggests a gap/hollow center
 
 
 def _refine_from_secondary_mask(
@@ -402,6 +469,29 @@ def _classify_duration(mask: MatLike, cx: int, cy: int, spacing: float) -> Durat
     if not filled and has_stem:
         return "half"
     if filled and has_stem:
+        return "quarter"
+    if filled and not has_stem:
+        # Edge case: filled notehead without detected stem
+        # Could be a whole note misclassified as filled due to staff remnants,
+        # or a quarter note with broken stem connectivity.
+        # Use size heuristic: whole notes are typically larger than quarter noteheads.
+        rx = max(2, int(round(spacing * 0.36)))
+        ry = max(2, int(round(spacing * 0.28)))
+        x1 = max(0, cx - rx)
+        x2 = min(mask.shape[1], cx + rx + 1)
+        y1 = max(0, cy - ry)
+        y2 = min(mask.shape[0], cy + ry + 1)
+        roi = mask[y1:y2, x1:x2]
+        if roi.size > 0:
+            # Whole noteheads are typically larger in appearance
+            # Check the actual ink extent
+            ink_pixels = cv.countNonZero(roi)
+            roi_area = roi.shape[0] * roi.shape[1]
+            fill_ratio = ink_pixels / float(roi_area) if roi_area > 0 else 0
+            # Whole notes (hollow) have lower fill ratio than filled noteheads
+            # but higher than true hollow due to staff remnants
+            if fill_ratio < 0.35:
+                return "whole"
         return "quarter"
     return None
 
