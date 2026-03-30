@@ -1,4 +1,18 @@
-"""Build Score object from detection results."""
+"""
+The data structure used to represent a score.
+Lends itself to a tree, but flattened for ease of use/parsing.
+We take the detection results and turn it into this tree of objects dictated by our schema:
+A Score consists of:
+    Score: [
+        staffs,
+        bars,
+        measures,
+        clefs,
+        notes,
+    ]
+Each of these branch, which lends them to this structure, we use the staff_index to identify which staff they belong to,
+after we have cropped the measures separately.
+"""
 
 from cv2.typing import MatLike
 
