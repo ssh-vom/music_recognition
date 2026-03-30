@@ -176,16 +176,9 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     meter = _meter_from_score(score)
     key = _abc_key_from_score(score)
     abc_path = artifacts.path(artifacts.sections.export, "output.abc")
-    polyphonic_abc_path = artifacts.path(artifacts.sections.export, "output_polyphonic.abc")
     write_abc_file(
         score_tree=score, output_path=abc_path,
         title=DEFAULT_TITLE, meter=meter,
-        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH, key=key,
-        tempo_qpm=DEFAULT_TEMPO_QPM, melody_only=True,
-    )
-    write_abc_file(
-        score_tree=score, output_path=polyphonic_abc_path,
-        title=f"{DEFAULT_TITLE} (Polyphonic)", meter=meter,
         unit_note_length=DEFAULT_UNIT_NOTE_LENGTH, key=key,
         tempo_qpm=DEFAULT_TEMPO_QPM,
     )

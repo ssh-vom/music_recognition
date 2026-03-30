@@ -18,7 +18,6 @@ def write_abc_file(
     unit_note_length="1/4",
     key="C",
     tempo_qpm=120,
-    melody_only=False,
 ):
     abc_text = build_abc_text(
         score=score_tree,
@@ -28,14 +27,13 @@ def write_abc_file(
         unit_note_length=unit_note_length,
         key=key,
         tempo_qpm=tempo_qpm,
-        melody_only=melody_only,
     )
     path = Path(output_path)
     path.write_text(abc_text, encoding="utf-8")
     return abc_text
 
 
-def build_abc_text(score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm, melody_only=False):
+def build_abc_text(score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm):
     header_lines = [
         f"X:{reference_number}",
         f"T:{title}",
@@ -44,11 +42,11 @@ def build_abc_text(score, *, title, reference_number, meter, unit_note_length, k
         f"Q:1/4={tempo_qpm}",
         f"K:{key}",
     ]
-    body = notes_to_abc_body(score=score, meter=meter, key=key, melody_only=melody_only)
+    body = notes_to_abc_body(score=score, meter=meter, key=key)
     return "\n".join(header_lines) + "\n" + body + "\n"
 
 
-def notes_to_abc_body(score, *, meter, key, melody_only=False):
+def notes_to_abc_body(score, *, meter, key):
     staff_lines = []
     default_rest = _default_measure_rest(meter)
     beats_per_measure = _meter_numerator(meter)
@@ -73,7 +71,6 @@ def notes_to_abc_body(score, *, meter, key, melody_only=False):
                 notes=notes,
                 beats_per_measure=beats_per_measure,
                 key_accidentals=key_accidentals,
-                melody_only=melody_only,
             )
             segments.append(" ".join(tokens) if tokens else default_rest)
 
@@ -131,7 +128,7 @@ def _boundary_separator(bar):
     return "|"
 
 
-def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals, melody_only=False):
+def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals):
     if not notes:
         return []
 
@@ -142,7 +139,7 @@ def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals, melody_o
     event_tokens = []
     beats = []
     for event_notes in events:
-        token = _event_to_abc_pitch(event_notes, key_accidentals=key_accidentals, melody_only=melody_only)
+        token = _event_to_abc_pitch(event_notes, key_accidentals=key_accidentals)
         if token is None:
             continue
         event_tokens.append(token)
@@ -209,7 +206,8 @@ def _group_notes_into_events(notes):
     return events
 
 
-def _event_to_abc_pitch(event_notes, key_accidentals, melody_only=False):
+def _event_to_abc_pitch(event_notes, key_accidentals):
+    """One ABC token per vertical slice: top note when several align at the same x."""
     pitch_tokens = []
     seen = set()
 
@@ -222,11 +220,7 @@ def _event_to_abc_pitch(event_notes, key_accidentals, melody_only=False):
 
     if not pitch_tokens:
         return None
-    if melody_only:
-        return pitch_tokens[-1]
-    if len(pitch_tokens) == 1:
-        return pitch_tokens[0]
-    return "[" + "".join(pitch_tokens) + "]"
+    return pitch_tokens[-1]
 
 
 def _chord_note_sort_key(note):
