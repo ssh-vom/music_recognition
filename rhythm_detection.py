@@ -116,52 +116,49 @@ def _detect_beam_count(
     up_count = sum(1 for d in stem_dirs if d == "up")
     down_count = sum(1 for d in stem_dirs if d == "down")
 
-    if up_count == 0 and down_count == 0:
+    if not (up_count or down_count):
         return 0
 
     beam_direction = "up" if up_count > down_count else "down"
 
     min_x = min(n.center_x for n in notes)
     max_x = max(n.center_x for n in notes)
-    x_range = max_x - min_x
-
-    if x_range < spacing * 0.5:
+    if max_x - min_x < spacing * 0.5:
         return 0
 
-    stem_tips = [_find_stem_endpoint(mask, n, spacing, beam_direction) for n in notes]
-    valid_tips = [y for y in stem_tips if y is not None]
-
-    if not valid_tips:
+    # Check for the stem tips and prune any invalids
+    tips = [
+        y
+        for note in notes
+        if (y := _find_stem_endpoint(mask, note, spacing, beam_direction)) is not None
+    ]
+    if not tips:
         return 0
 
-    if beam_direction == "up":
-        beam_y = min(valid_tips)
-    else:
-        beam_y = max(valid_tips)
-
-    search_y_start = max(0, beam_y - int(spacing * 0.5))
-    search_y_end = min(mask.shape[0], beam_y + int(spacing * 0.5))
-
-    if search_y_start >= search_y_end:
+    beam_y = min(tips) if beam_direction == "up" else max(tips)
+    padding = int(spacing * 0.5)
+    y0 = max(0, beam_y - padding)
+    y1 = min(mask.shape[0], beam_y + padding)
+    if y0 >= y1 or min_x >= max_x:
         return 0
 
-    band_region = mask[search_y_start:search_y_end, min_x:max_x]
-    if band_region.size == 0:
+    band = mask[y0:y1, min_x:max_x]
+    if band.size == 0:
         return 0
 
-    horizontal_density = np.sum(band_region > 0, axis=1)
+    horizontal_density = np.sum(band > 0, axis=1)
     threshold = max(2, spacing * 0.15)
     peaks = _find_peaks(horizontal_density, threshold)
 
     beam_count = 0
-    for peak_y_local, _ in peaks:
-        peak_y = search_y_start + peak_y_local
-        row_mask = mask[peak_y, min_x:max_x] > 0
+    x_span = max_x - min_x
+    for local_y, _ in peaks:
+        row_mask = mask[y0 + local_y, min_x:max_x] > 0
         runs = _find_ink_runs(row_mask)
         total_ink = sum(length for _, length in runs)
         longest_run = max((length for _, length in runs), default=0)
 
-        if total_ink / x_range > 0.20 and longest_run > spacing * 0.8:
+        if total_ink / x_span > 0.20 and longest_run > spacing * 0.8:
             beam_count += 1
             if beam_count >= 2:
                 break

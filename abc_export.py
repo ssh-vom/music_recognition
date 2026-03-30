@@ -36,54 +36,52 @@ def write_abc_file(
 def build_abc_text(
     score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm
 ):
-    header_lines = [
+    header = [
         f"X:{reference_number}",
         f"T:{title}",
         f"M:{meter}",
         f"L:{unit_note_length}",
+        *([f"Q:1/4={tempo_qpm}"] if tempo_qpm is not None else []),
         f"K:{key}",
     ]
-    if tempo_qpm is not None:
-        header_lines.insert(4, f"Q:1/4={tempo_qpm}")
-    body = notes_to_abc_body(score=score, meter=meter, key=key)
-    return "\n".join(header_lines) + "\n" + body + "\n"
+    return (
+        "\n".join(header)
+        + "\n"
+        + notes_to_abc_body(score=score, meter=meter, key=key)
+        + "\n"
+    )
 
 
 def notes_to_abc_body(score, *, meter, key):
-    staff_lines = []
     default_rest = _default_measure_rest(meter)
     beats_per_measure = _meter_numerator(meter)
     key_accidentals = _abc_key_signature_accidentals(key)
+    staff_lines = []
 
-    for staff_index, staff in enumerate(score.staffs):
-        staff_measures = score.get_measures_for_staff(staff_index)
-        staff_bars = score.get_bars_for_staff(staff_index)
-
-        if not staff_measures:
+    for staff_index, _ in enumerate(score.staffs):
+        measures = score.get_measures_for_staff(staff_index)
+        if not measures:
             continue
 
-        segments = []
-        if _has_left_begin_repeat_flat(staff_bars, staff_measures):
-            segments.append("|:")
-        else:
-            segments.append("|")
+        bars = score.get_bars_for_staff(staff_index)
+        end_bar = _find_end_bar(bars, measures)
+        segments = ["|:" if _has_left_begin_repeat_flat(bars, measures) else "|"]
 
-        for measure_index, measure in enumerate(staff_measures):
-            notes = score.get_notes_for_measure(staff_index, measure_index)
+        for i, measure in enumerate(measures):
+            notes = score.get_notes_for_measure(staff_index, i)
             tokens = _notes_to_measure_tokens(
                 notes=notes,
                 beats_per_measure=beats_per_measure,
                 key_accidentals=key_accidentals,
             )
-            segments.append(" ".join(tokens) if tokens else default_rest)
-
-            if measure_index < len(staff_measures) - 1:
-                segments.append(_boundary_separator(measure.closing_bar))
-            else:
-                end_bar = _find_end_bar(staff_bars, staff_measures)
-                segments.append(
-                    ":|" if end_bar is not None and end_bar.repeat == "end" else "|"
-                )
+            segments += [
+                " ".join(tokens) if tokens else default_rest,
+                _boundary_separator(measure.closing_bar)
+                if i < len(measures) - 1
+                else ":|"
+                if end_bar and end_bar.repeat == "end"
+                else "|",
+            ]
 
         staff_lines.append(" ".join(segments))
 
