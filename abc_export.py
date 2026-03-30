@@ -4,6 +4,7 @@ from pathlib import Path
 
 from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
 from schema import BarLine
+
 BEAM_BREAK_EPSILON = 1e-6
 
 
@@ -32,7 +33,9 @@ def write_abc_file(
     return abc_text
 
 
-def build_abc_text(score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm):
+def build_abc_text(
+    score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm
+):
     header_lines = [
         f"X:{reference_number}",
         f"T:{title}",
@@ -77,18 +80,25 @@ def notes_to_abc_body(score, *, meter, key):
                 segments.append(_boundary_separator(measure.closing_bar))
             else:
                 end_bar = _find_end_bar(staff_bars, staff_measures)
-                segments.append(":|" if end_bar is not None and end_bar.repeat == "end" else "|")
+                segments.append(
+                    ":|" if end_bar is not None and end_bar.repeat == "end" else "|"
+                )
 
         staff_lines.append(" ".join(segments))
 
     return "\n".join(staff_lines) if staff_lines else f"| {default_rest} |"
 
 
-def _has_left_begin_repeat_flat(staff_bars: list[BarLine], staff_measures: list) -> bool:
+def _has_left_begin_repeat_flat(
+    staff_bars: list[BarLine], staff_measures: list
+) -> bool:
     if not staff_bars or not staff_measures:
         return False
     first_measure = staff_measures[0]
-    return any(bar.x <= first_measure.x_start + 8 and bar.repeat == "begin" for bar in staff_bars)
+    return any(
+        bar.x <= first_measure.x_start + 8 and bar.repeat == "begin"
+        for bar in staff_bars
+    )
 
 
 def _find_end_bar(staff_bars: list[BarLine], staff_measures: list) -> BarLine | None:
@@ -205,7 +215,11 @@ def _event_to_abc_pitch(event_notes, key_accidentals):
 
 
 def _chord_note_sort_key(note):
-    return (note.octave if note.octave is not None else 0, note.pitch_letter or "", note.center_y)
+    return (
+        note.octave if note.octave is not None else 0,
+        note.pitch_letter or "",
+        note.center_y,
+    )
 
 
 def _event_beats(event_notes):
@@ -247,8 +261,21 @@ FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
 
 def _abc_key_signature_accidentals(key: str) -> dict[str, str]:
     major_fifths = {
-        "CB": -7, "GB": -6, "DB": -5, "AB": -4, "EB": -3, "BB": -2, "F": -1,
-        "C": 0, "G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "F#": 6, "C#": 7,
+        "CB": -7,
+        "GB": -6,
+        "DB": -5,
+        "AB": -4,
+        "EB": -3,
+        "BB": -2,
+        "F": -1,
+        "C": 0,
+        "G": 1,
+        "D": 2,
+        "A": 3,
+        "E": 4,
+        "B": 5,
+        "F#": 6,
+        "C#": 7,
     }
 
     normalized = (key or "C").strip() or "C"

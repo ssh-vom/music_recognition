@@ -35,7 +35,15 @@ from constants import (
     STEM_Y_RADIUS_FRAC,
     WHOLE_NOTE_FILL_RATIO_MAX,
 )
-from schema import Clef, DurationClass, KeySignature, Measure, Note, Staff, StepConfidence
+from schema import (
+    Clef,
+    DurationClass,
+    KeySignature,
+    Measure,
+    Note,
+    Staff,
+    StepConfidence,
+)
 
 PITCH_CYCLE = ("C", "D", "E", "F", "G", "A", "B")
 PITCH_TO_INDEX = {letter: idx for idx, letter in enumerate(PITCH_CYCLE)}
@@ -66,14 +74,18 @@ def find_notes(
     components = cv.connectedComponentsWithStats(notehead_mask, connectivity=8)
     secondary = cv.connectedComponentsWithStats(secondary_mask, connectivity=8)
 
-    centers = _filter_notehead_candidates(components, secondary, staff.spacing, mask.shape, intermediates)
+    centers = _filter_notehead_candidates(
+        components, secondary, staff.spacing, mask.shape, intermediates
+    )
 
     merge_distance = max(2, int(round(staff.spacing * NOTE_MERGE_DISTANCE_FRAC)))
     centers = _merge_nearby_centers(centers, merge_distance)
 
     intermediates["centers_after_merge"] = centers.copy()
 
-    centers = _add_stem_centers(mask, centers, staff.spacing, merge_distance, intermediates)
+    centers = _add_stem_centers(
+        mask, centers, staff.spacing, merge_distance, intermediates
+    )
 
     notes = _resolve_notes(centers, mask, staff, measure, measure_index)
     notes = _merge_duplicate_detections(notes, staff.spacing, mask)
@@ -83,7 +95,9 @@ def find_notes(
 
 
 def _extract_notehead_mask(mask: MatLike, spacing: float) -> MatLike:
-    diameter = max(NOTEHEAD_KERNEL_MIN, int(round(spacing * NOTEHEAD_KERNEL_DIAMETER_FRAC)))
+    diameter = max(
+        NOTEHEAD_KERNEL_MIN, int(round(spacing * NOTEHEAD_KERNEL_DIAMETER_FRAC))
+    )
     if diameter % 2 == 0:
         diameter += 1
     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (diameter, diameter))
@@ -116,7 +130,7 @@ def _filter_notehead_candidates(
         w = int(stats[i, cv.CC_STAT_WIDTH])
         h = int(stats[i, cv.CC_STAT_HEIGHT])
         area = float(stats[i, cv.CC_STAT_AREA])
-        aspect = w / float(h) if h > 0 else float('inf')
+        aspect = w / float(h) if h > 0 else float("inf")
 
         valid_area = min_area <= area <= max_area
         valid_size = min_size <= w <= max_size and min_size <= h <= max_size
@@ -127,7 +141,14 @@ def _filter_notehead_candidates(
 
         if area <= tiny_area and valid_area:
             refined = _refine_tiny_center(
-                cx, cy, s_count, s_stats, s_centroids, spacing, shape[1] - 1, shape[0] - 1
+                cx,
+                cy,
+                s_count,
+                s_stats,
+                s_centroids,
+                spacing,
+                shape[1] - 1,
+                shape[0] - 1,
             )
             if refined:
                 cx, cy = refined
@@ -136,10 +157,18 @@ def _filter_notehead_candidates(
             centers.append((cx, cy))
 
         if filtered_log is not None:
-            filtered_log.append({
-                "id": i, "x": cx, "y": cy, "w": w, "h": h,
-                "area": area, "aspect": aspect, "passed": valid_area and valid_size and valid_aspect
-            })
+            filtered_log.append(
+                {
+                    "id": i,
+                    "x": cx,
+                    "y": cy,
+                    "w": w,
+                    "h": h,
+                    "area": area,
+                    "aspect": aspect,
+                    "passed": valid_area and valid_size and valid_aspect,
+                }
+            )
 
     if intermediates is not None:
         intermediates["filtered_components"] = filtered_log
@@ -154,7 +183,7 @@ def _refine_tiny_center(cx, cy, count, stats, centroids, spacing, max_x, max_y):
     min_area = spacing * spacing * 0.30
     max_width = int(round(spacing * 1.7))
 
-    best_idx, best_dx = -1, float('inf')
+    best_idx, best_dx = -1, float("inf")
 
     for i in range(1, count):
         w = int(stats[i, cv.CC_STAT_WIDTH])
@@ -183,7 +212,9 @@ def _refine_tiny_center(cx, cy, count, stats, centroids, spacing, max_x, max_y):
     return max(0, min(max_x, rx)), max(0, min(max_y, ry))
 
 
-def _merge_nearby_centers(centers: list[tuple[int, int]], merge_dist: int) -> list[list]:
+def _merge_nearby_centers(
+    centers: list[tuple[int, int]], merge_dist: int
+) -> list[list]:
     if not centers:
         return []
 
@@ -206,7 +237,11 @@ def _merge_nearby_centers(centers: list[tuple[int, int]], merge_dist: int) -> li
 
 
 def _add_stem_centers(
-    mask: MatLike, centers: list[list], spacing: float, merge_dist: int, intermediates: dict | None
+    mask: MatLike,
+    centers: list[list],
+    spacing: float,
+    merge_dist: int,
+    intermediates: dict | None,
 ) -> list[list]:
     if len(centers) > 2:
         if intermediates is not None:
@@ -239,7 +274,10 @@ def _add_stem_centers(
         cx = x + w // 2
         cy = y + h - max(1, int(round(spacing * 0.55)))
 
-        if any(abs(cx - ex) <= overlap_x and abs(cy - ey) <= overlap_y for ex, ey, _ in result):
+        if any(
+            abs(cx - ex) <= overlap_x and abs(cy - ey) <= overlap_y
+            for ex, ey, _ in result
+        ):
             continue
 
         result.append([cx, cy, 1])
@@ -248,13 +286,20 @@ def _add_stem_centers(
             break
 
     if intermediates is not None:
-        intermediates["stem_augmentation"] = {"original_count": len(centers), "final_count": len(result)}
+        intermediates["stem_augmentation"] = {
+            "original_count": len(centers),
+            "final_count": len(result),
+        }
 
     return sorted(result, key=lambda c: c[0])
 
 
 def _resolve_notes(
-    centers: list[list], mask: MatLike, staff: Staff, measure: Measure, measure_index: int
+    centers: list[list],
+    mask: MatLike,
+    staff: Staff,
+    measure: Measure,
+    measure_index: int,
 ) -> list[Note]:
     bottom_line_y = int(round(staff.lines[4].y - measure.y_top))
     half_step_px = staff.spacing / 2.0
@@ -271,16 +316,18 @@ def _resolve_notes(
         step = _quantize_to_step(step_float)
         residual = abs(step_float - step)
 
-        notes.append(Note(
-            kind="notehead",
-            staff_index=measure.staff_index,
-            measure_index=measure_index,
-            center_x=cx,
-            center_y=cy,
-            step=step,
-            step_confidence=_step_confidence(residual),
-            duration_class=duration,
-        ))
+        notes.append(
+            Note(
+                kind="notehead",
+                staff_index=measure.staff_index,
+                measure_index=measure_index,
+                center_x=cx,
+                center_y=cy,
+                step=step,
+                step_confidence=_step_confidence(residual),
+                duration_class=duration,
+            )
+        )
 
     return notes
 
@@ -316,7 +363,8 @@ def _merge_duplicate_detections(
         prev = result[-1]
 
         is_unclassified_pair = (
-            prev.duration_class is None and note.duration_class is None
+            prev.duration_class is None
+            and note.duration_class is None
             and abs(note.center_x - prev.center_x) <= x_tol
             and abs(note.center_y - prev.center_y) <= y_tol
             and abs(note.step - prev.step) <= DUPLICATE_MAX_STEP_DIFF
@@ -345,7 +393,9 @@ def _merge_duplicate_detections(
     return result
 
 
-def _has_hollow_center_gap(mask: MatLike | None, note1: Note, note2: Note, spacing: float) -> bool:
+def _has_hollow_center_gap(
+    mask: MatLike | None, note1: Note, note2: Note, spacing: float
+) -> bool:
     if mask is None:
         dist = abs(note1.center_x - note2.center_x)
         return spacing * 0.4 <= dist <= spacing * 1.5
@@ -366,7 +416,9 @@ def _has_hollow_center_gap(mask: MatLike | None, note1: Note, note2: Note, spaci
     return cv.countNonZero(roi) / float(roi.size) < HOLLOW_SPLIT_INK_RATIO_MAX
 
 
-def _classify_duration(mask: MatLike, cx: int, cy: int, spacing: float) -> DurationClass | None:
+def _classify_duration(
+    mask: MatLike, cx: int, cy: int, spacing: float
+) -> DurationClass | None:
     filled = _detect_fill(mask, cx, cy, spacing)
     has_stem = _detect_stem(mask, cx, cy, spacing)
 
@@ -393,7 +445,16 @@ def _detect_fill(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
         return False
 
     ellipse = np.zeros(roi.shape, dtype=np.uint8)
-    cv.ellipse(ellipse, (cx - x0, cy - y0), (max(1, rx - 1), max(1, ry - 1)), 0, 0, 360, 255, -1)
+    cv.ellipse(
+        ellipse,
+        (cx - x0, cy - y0),
+        (max(1, rx - 1), max(1, ry - 1)),
+        0,
+        0,
+        360,
+        255,
+        -1,
+    )
 
     ellipse_area = cv.countNonZero(ellipse)
     if ellipse_area == 0:
@@ -430,7 +491,9 @@ def _detect_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     return False
 
 
-def _resolve_ambiguous_filled_note(mask: MatLike, cx: int, cy: int, spacing: float) -> DurationClass:
+def _resolve_ambiguous_filled_note(
+    mask: MatLike, cx: int, cy: int, spacing: float
+) -> DurationClass:
     rx = max(2, int(round(spacing * FILL_ELLIPSE_X_RADIUS_FRAC)))
     ry = max(2, int(round(spacing * FILL_ELLIPSE_Y_RADIUS_FRAC)))
 
@@ -473,6 +536,6 @@ def _get_key_accidentals(key_sig: KeySignature) -> dict[str, str]:
         for letter in CIRCLE_OF_FIFTHS_SHARPS[:fifths]:
             accidentals[letter] = "#"
     elif fifths < 0:
-        for letter in CIRCLE_OF_FIFTHS_FLATS[:abs(fifths)]:
+        for letter in CIRCLE_OF_FIFTHS_FLATS[: abs(fifths)]:
             accidentals[letter] = "b"
     return accidentals

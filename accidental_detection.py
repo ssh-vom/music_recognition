@@ -143,13 +143,17 @@ def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
                 continue
 
             result = cv.matchTemplate(roi, scaled, cv.TM_CCOEFF_NORMED)
-            for score, cx, cy in _gather_peaks(result, MATCH_THRESHOLD, min_dist, tw, th):
+            for score, cx, cy in _gather_peaks(
+                result, MATCH_THRESHOLD, min_dist, tw, th
+            ):
                 candidates.append((score, cx, cy, kind))
 
     return _nms(candidates, min_dist)
 
 
-def _detect_header_accidentals_geometric(roi: MatLike, spacing: float) -> list[tuple[float, int, int, str]]:
+def _detect_header_accidentals_geometric(
+    roi: MatLike, spacing: float
+) -> list[tuple[float, int, int, str]]:
     """Detect header accidentals by counting vertical stroke clusters.
 
     Sharps have two tall stroke clusters; flats have one.
@@ -175,7 +179,9 @@ def _detect_header_accidentals_geometric(roi: MatLike, spacing: float) -> list[t
 
         comp = (labels[y : y + h, x : x + w] == i).astype(np.uint8)
         tall_threshold = max(3, int(round(h * 0.75)))
-        tall_cols = [idx for idx, v in enumerate(np.sum(comp, axis=0)) if v >= tall_threshold]
+        tall_cols = [
+            idx for idx, v in enumerate(np.sum(comp, axis=0)) if v >= tall_threshold
+        ]
         tall_clusters = _count_index_clusters(tall_cols)
 
         if tall_clusters >= 2:
@@ -198,7 +204,9 @@ def _count_index_clusters(indices: list[int], max_gap: int = 1) -> int:
     return clusters
 
 
-def _gather_peaks(result: MatLike, threshold: float, min_dist: int, tw: int, th: int) -> list[tuple]:
+def _gather_peaks(
+    result: MatLike, threshold: float, min_dist: int, tw: int, th: int
+) -> list[tuple]:
     work = result.copy()
     peaks = []
 
@@ -219,7 +227,10 @@ def _nms(candidates: list, min_dist: int) -> list:
     kept = []
 
     for score, cx, cy, kind in candidates:
-        if any((cx - ox) ** 2 + (cy - oy) ** 2 < min_dist * min_dist for _, ox, oy, _ in kept):
+        if any(
+            (cx - ox) ** 2 + (cy - oy) ** 2 < min_dist * min_dist
+            for _, ox, oy, _ in kept
+        ):
             continue
         kept.append((score, cx, cy, kind))
 

@@ -33,14 +33,18 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     staff_h = y1 - y0
     roi = image[y0:y1, :]
 
-    skip_mult = BAR_SEARCH_LEFT_SKIP_FRAC if staff_idx == 0 else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC
+    skip_mult = (
+        BAR_SEARCH_LEFT_SKIP_FRAC if staff_idx == 0 else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC
+    )
     left_skip = int(round(skip_mult * staff.spacing))
     work = roi[:, left_skip:]
 
     if work.size == 0:
         return []
 
-    kernel_h = max(BAR_CLOSE_KERNEL_MIN, int(round(BAR_CLOSE_KERNEL_HEIGHT_FRAC * staff.spacing)))
+    kernel_h = max(
+        BAR_CLOSE_KERNEL_MIN, int(round(BAR_CLOSE_KERNEL_HEIGHT_FRAC * staff.spacing))
+    )
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h))
     joined = cv.morphologyEx(work, cv.MORPH_CLOSE, kernel)
 
@@ -51,7 +55,13 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
 
 
 def _contours_to_bars(
-    contours, staff: Staff, left_skip: int, staff_h: int, y0: int, y1: int, staff_idx: int
+    contours,
+    staff: Staff,
+    left_skip: int,
+    staff_h: int,
+    y0: int,
+    y1: int,
+    staff_idx: int,
 ) -> list[BarLine]:
     staff_right = max(line.x_end for line in staff.lines)
 
@@ -59,7 +69,9 @@ def _contours_to_bars(
     min_double_width = int(round(BAR_DOUBLE_MIN_WIDTH_FRAC * staff.spacing))
     right_margin = int(round(BAR_RIGHT_MARGIN_FRAC * staff.spacing))
     left_margin = int(round(BAR_LEFT_MARGIN_FRAC * staff.spacing))
-    left_relaxed_max = max_width + int(round(BAR_LEFT_RELAXED_EXTRA_FRAC * staff.spacing))
+    left_relaxed_max = max_width + int(
+        round(BAR_LEFT_RELAXED_EXTRA_FRAC * staff.spacing)
+    )
     min_height = int(round(BAR_MIN_HEIGHT_FRAC * staff_h))
 
     bars = []
@@ -88,15 +100,44 @@ def _contours_to_bars(
             continue
 
         if w >= min_double_width and near_right:
-            bars.append(BarLine(x=abs_left, y_top=y0, y_bottom=y1-1, kind="double_left", repeat="none", staff_index=staff_idx))
-            bars.append(BarLine(x=abs_right, y_top=y0, y_bottom=y1-1, kind="double_right", repeat="none", staff_index=staff_idx))
+            bars.append(
+                BarLine(
+                    x=abs_left,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="double_left",
+                    repeat="none",
+                    staff_index=staff_idx,
+                )
+            )
+            bars.append(
+                BarLine(
+                    x=abs_right,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="double_right",
+                    repeat="none",
+                    staff_index=staff_idx,
+                )
+            )
         else:
-            bars.append(BarLine(x=abs_center, y_top=y0, y_bottom=y1-1, kind="single", repeat="none", staff_index=staff_idx))
+            bars.append(
+                BarLine(
+                    x=abs_center,
+                    y_top=y0,
+                    y_bottom=y1 - 1,
+                    kind="single",
+                    repeat="none",
+                    staff_index=staff_idx,
+                )
+            )
 
     return bars
 
 
-def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff, staff_idx: int) -> list[BarLine]:
+def _merge_and_classify_pairs(
+    bars: list[BarLine], staff: Staff, staff_idx: int
+) -> list[BarLine]:
     if len(bars) < 2:
         return bars
 
@@ -115,10 +156,13 @@ def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff, staff_idx: int)
             merged.append(bar)
 
     staff_right = max(line.x_end for line in staff.lines)
-    left_skip = int(round(
-        BAR_SEARCH_LEFT_SKIP_FRAC * staff.spacing if staff_idx == 0
-        else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC * staff.spacing
-    ))
+    left_skip = int(
+        round(
+            BAR_SEARCH_LEFT_SKIP_FRAC * staff.spacing
+            if staff_idx == 0
+            else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC * staff.spacing
+        )
+    )
 
     edge_margin = int(round(BAR_LEFT_MARGIN_FRAC * staff.spacing))
     left_edge = left_skip + edge_margin
@@ -131,7 +175,8 @@ def _merge_and_classify_pairs(bars: list[BarLine], staff: Staff, staff_idx: int)
         if i + 1 < len(merged):
             left, right = merged[i], merged[i + 1]
             if (
-                left.kind == "single" and right.kind == "single"
+                left.kind == "single"
+                and right.kind == "single"
                 and right.x - left.x <= pair_gap
                 and (right.x <= left_edge or left.x >= right_edge)
             ):

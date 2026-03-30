@@ -69,19 +69,33 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     staffs, binary, line_mask = find_staves(raw_bgr)
     gray = to_gray(raw_bgr)
     staff_intermediates = save_staff_detection(
-        image=raw_bgr, gray=gray, binary=binary,
-        line_mask=line_mask, staffs=staffs, artifacts=artifacts,
+        image=raw_bgr,
+        gray=gray,
+        binary=binary,
+        line_mask=line_mask,
+        staffs=staffs,
+        artifacts=artifacts,
     )
     print(f"  {len(staffs)} staff(s)")
 
     notes_mask = erase_staff_for_notes(to_gray(raw_bgr), staffs)
     bars_mask = erase_staff_for_bars(binary, staffs)
-    artifacts.write_image(artifacts.sections.masks, "02_notes_mask_erased.jpg", cv.bitwise_not(notes_mask))
-    artifacts.write_image(artifacts.sections.masks, "03_bars_mask_erased.jpg", cv.bitwise_not(bars_mask))
+    artifacts.write_image(
+        artifacts.sections.masks, "02_notes_mask_erased.jpg", cv.bitwise_not(notes_mask)
+    )
+    artifacts.write_image(
+        artifacts.sections.masks, "03_bars_mask_erased.jpg", cv.bitwise_not(bars_mask)
+    )
 
     print("Detecting bar lines...")
     bars = find_bars(image=bars_mask, staffs=staffs)
-    save_bar_visualization(image=raw_bgr, bars_mask=bars_mask, staffs=staffs, bars=bars, artifacts=artifacts)
+    save_bar_visualization(
+        image=raw_bgr,
+        bars_mask=bars_mask,
+        staffs=staffs,
+        bars=bars,
+        artifacts=artifacts,
+    )
     print(f"  {len(bars)} bar line(s)")
 
     print("Detecting clefs...")
@@ -114,15 +128,21 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
 
     print("Splitting into measures...")
     measures_map = split_measures(
-        bars=bars, staffs=staffs,
-        left_header_spacings=5.2, first_staff_conservative_spacings=7.0,
+        bars=bars,
+        staffs=staffs,
+        left_header_spacings=5.2,
+        first_staff_conservative_spacings=7.0,
     )
     measure_crops = crop_measures(
-        measures_map=measures_map, staffs=staffs, notes_image=notes_mask,
+        measures_map=measures_map,
+        staffs=staffs,
+        notes_image=notes_mask,
     )
     save_measure_visualization(
-        sheet_image=raw_bgr, measures_map=measures_map,
-        measure_crops=measure_crops, artifacts=artifacts,
+        sheet_image=raw_bgr,
+        measures_map=measures_map,
+        measure_crops=measure_crops,
+        artifacts=artifacts,
     )
     total_measures = sum(len(m) for m in measures_map.values())
     print(f"  {total_measures} measure(s)")
@@ -151,8 +171,10 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     print("Creating visualizations...")
     _create_full_overlays(score, clefs_by_staff, clef_detections, artifacts)
     save_notes_visualization(
-        notes_mask=notes_mask, score=score,
-        artifacts=artifacts, intermediates_by_measure=note_intermediates,
+        notes_mask=notes_mask,
+        score=score,
+        artifacts=artifacts,
+        intermediates_by_measure=note_intermediates,
     )
     _save_first_staff_accidental_visualization(
         raw_clef_key_crops=raw_clef_key_crops,
@@ -174,16 +196,23 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     key = abc_key_from_score(score)
     abc_path = artifacts.path(artifacts.sections.export, "output.abc")
     write_abc_file(
-        score_tree=score, output_path=abc_path,
-        title=DEFAULT_TITLE, meter=meter,
-        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH, key=key,
+        score_tree=score,
+        output_path=abc_path,
+        title=DEFAULT_TITLE,
+        meter=meter,
+        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
+        key=key,
         tempo_qpm=DEFAULT_TEMPO_QPM,
     )
 
-    print(f"Done — {len(staffs)} staves, {total_measures} measures, {len(score.notes)} notes → {artifacts.root}")
+    print(
+        f"Done — {len(staffs)} staves, {total_measures} measures, {len(score.notes)} notes → {artifacts.root}"
+    )
 
     if show_windows:
-        cv.imshow("Staff Detection", staff_intermediates.get("04_staff_overlay", raw_bgr))
+        cv.imshow(
+            "Staff Detection", staff_intermediates.get("04_staff_overlay", raw_bgr)
+        )
         cv.imshow("Bar Detection", draw_bars_overlay(raw_bgr, bars))
         cv.waitKey(0)
         cv.destroyAllWindows()
@@ -208,12 +237,20 @@ def _detect_first_staff_header_accidentals(
     try:
         min_x = _header_search_left_x(crop=crop, staff_spacing=staffs[0].spacing)
         max_x = _first_barline_x_limit_for_header(
-            bars=bars, clef=clef, crop_width=crop.shape[1], staff_spacing=staffs[0].spacing
+            bars=bars,
+            clef=clef,
+            crop_width=crop.shape[1],
+            staff_spacing=staffs[0].spacing,
         )
-        max_x = _header_search_right_x(crop=crop, default_max_x=max_x, staff_spacing=staffs[0].spacing)
+        max_x = _header_search_right_x(
+            crop=crop, default_max_x=max_x, staff_spacing=staffs[0].spacing
+        )
         accidentals = detect_key_signature_accidentals(
-            clef_key_crop=crop, staff=staffs[0], staff_index=0,
-            x_start=min_x, x_end=max_x + 1,
+            clef_key_crop=crop,
+            staff=staffs[0],
+            staff_index=0,
+            x_start=min_x,
+            x_end=max_x + 1,
         )
         accidentals = _dedup_accidentals_by_x(
             accidentals=accidentals,
@@ -256,8 +293,22 @@ def _save_first_staff_accidental_visualization(
     max_x = _header_search_right_x(
         crop=detection_crop, default_max_x=max_x, staff_spacing=staffs[0].spacing
     )
-    cv.line(overlay, (min_x, 0), (min_x, max(0, overlay.shape[0] - 1)), (80, 220, 80), 1, cv.LINE_AA)
-    cv.line(overlay, (max_x, 0), (max_x, max(0, overlay.shape[0] - 1)), (0, 200, 255), 1, cv.LINE_AA)
+    cv.line(
+        overlay,
+        (min_x, 0),
+        (min_x, max(0, overlay.shape[0] - 1)),
+        (80, 220, 80),
+        1,
+        cv.LINE_AA,
+    )
+    cv.line(
+        overlay,
+        (max_x, 0),
+        (max_x, max(0, overlay.shape[0] - 1)),
+        (0, 200, 255),
+        1,
+        cv.LINE_AA,
+    )
     _draw_header_accidental_boxes(overlay, detection_crop, header_accidentals)
     save_accidental_visualization(overlay, header_accidentals, artifacts)
 
@@ -285,7 +336,9 @@ def _header_search_left_x(crop: MatLike, staff_spacing: float) -> int:
     return max(0, min(crop.shape[1] - 1, best_right + margin))
 
 
-def _header_search_right_x(crop: MatLike, default_max_x: int, staff_spacing: float) -> int:
+def _header_search_right_x(
+    crop: MatLike, default_max_x: int, staff_spacing: float
+) -> int:
     if crop.size == 0:
         return default_max_x
 
@@ -315,7 +368,9 @@ def _draw_header_accidental_boxes(
     if detection_crop.size == 0 or not accidentals:
         return
 
-    count, labels, stats, _ = cv.connectedComponentsWithStats(detection_crop, connectivity=8)
+    count, labels, stats, _ = cv.connectedComponentsWithStats(
+        detection_crop, connectivity=8
+    )
     h, w = detection_crop.shape[:2]
 
     for glyph in accidentals:
@@ -329,7 +384,14 @@ def _draw_header_accidental_boxes(
         box_w = int(stats[label, cv.CC_STAT_WIDTH])
         box_h = int(stats[label, cv.CC_STAT_HEIGHT])
         color = (255, 0, 255) if glyph.kind == "sharp" else (255, 128, 0)
-        cv.rectangle(overlay, (left, top), (left + box_w - 1, top + box_h - 1), color, 1, cv.LINE_AA)
+        cv.rectangle(
+            overlay,
+            (left, top),
+            (left + box_w - 1, top + box_h - 1),
+            color,
+            1,
+            cv.LINE_AA,
+        )
 
 
 def _detect_first_staff_time_signature(
@@ -349,7 +411,9 @@ def _detect_first_staff_time_signature(
     max_x = _first_barline_x_limit_for_header(
         bars=bars, clef=clef, crop_width=crop.shape[1], staff_spacing=staffs[0].spacing
     )
-    time_roi = _time_signature_roi(crop=crop, max_x=max_x, staff_spacing=staffs[0].spacing)
+    time_roi = _time_signature_roi(
+        crop=crop, max_x=max_x, staff_spacing=staffs[0].spacing
+    )
     if time_roi is None:
         return None
 
@@ -367,7 +431,9 @@ def _apply_detected_key_signature(
         clef.key_signature = key_signature
 
 
-def _key_signature_from_header_accidentals(header_accidentals: list[Accidental]) -> KeySignature:
+def _key_signature_from_header_accidentals(
+    header_accidentals: list[Accidental],
+) -> KeySignature:
     sharp_count = sum(1 for g in header_accidentals if g.kind == "sharp")
     flat_count = sum(1 for g in header_accidentals if g.kind == "flat")
 
@@ -381,7 +447,9 @@ def _key_signature_from_header_accidentals(header_accidentals: list[Accidental])
     return KeySignature(fifths=fifths, mode="major")
 
 
-def _time_signature_roi(crop: MatLike, max_x: int, staff_spacing: float) -> MatLike | None:
+def _time_signature_roi(
+    crop: MatLike, max_x: int, staff_spacing: float
+) -> MatLike | None:
     if crop.size == 0:
         return None
 
@@ -436,7 +504,9 @@ def _ocr_number_tokens(image: MatLike, psm: int) -> list[int]:
 
 
 def _looks_like_common_time(time_roi: MatLike) -> bool:
-    scaled = cv.resize(to_gray(time_roi), None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC)
+    scaled = cv.resize(
+        to_gray(time_roi), None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC
+    )
     config = "--oem 3 --psm 8 -c tessedit_char_whitelist=Cc"
     return pytesseract.image_to_string(scaled, config=config).strip().lower() == "c"
 
@@ -444,7 +514,9 @@ def _looks_like_common_time(time_roi: MatLike) -> bool:
 def _first_barline_x_limit_for_header(
     bars: list[BarLine], clef: Clef, crop_width: int, staff_spacing: float
 ) -> int:
-    staff_bars = sorted([b for b in bars if b.staff_index == clef.staff_index], key=lambda b: b.x)
+    staff_bars = sorted(
+        [b for b in bars if b.staff_index == clef.staff_index], key=lambda b: b.x
+    )
     if not staff_bars:
         return max(0, crop_width - 1)
 
@@ -453,7 +525,9 @@ def _first_barline_x_limit_for_header(
     return max(0, min(crop_width - 1, max_x))
 
 
-def _dedup_accidentals_by_x(accidentals: list[Accidental], x_tol: int) -> list[Accidental]:
+def _dedup_accidentals_by_x(
+    accidentals: list[Accidental], x_tol: int
+) -> list[Accidental]:
     if len(accidentals) < 2:
         return accidentals
 
@@ -528,15 +602,17 @@ def _reclassify_header_accidentals(
         else:
             kind = glyph.kind
 
-        updated.append(Accidental(
-            kind=kind,
-            staff_index=glyph.staff_index,
-            measure_index=glyph.measure_index,
-            center_x=glyph.center_x,
-            center_y=glyph.center_y,
-            confidence=glyph.confidence,
-            region=glyph.region,
-        ))
+        updated.append(
+            Accidental(
+                kind=kind,
+                staff_index=glyph.staff_index,
+                measure_index=glyph.measure_index,
+                center_x=glyph.center_x,
+                center_y=glyph.center_y,
+                confidence=glyph.confidence,
+                region=glyph.region,
+            )
+        )
 
     return updated
 
@@ -574,7 +650,9 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
 
     for staff_index, staff in enumerate(score.staffs):
         clef = score.clefs.get(staff_index)
-        for measure_index, measure in enumerate(score.get_measures_for_staff(staff_index)):
+        for measure_index, measure in enumerate(
+            score.get_measures_for_staff(staff_index)
+        ):
             if measure.crop is None:
                 continue
 
@@ -586,8 +664,12 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
             )
             intermediates_by_measure[(staff_index, measure_index)] = intermediates
 
-            detected_notes = _remove_left_edge_header_bleed(detected_notes, staff, measure_index)
-            detected_notes = refine_beamed_durations(mask=measure.crop, notes=detected_notes, staff=staff)
+            detected_notes = _remove_left_edge_header_bleed(
+                detected_notes, staff, measure_index
+            )
+            detected_notes = refine_beamed_durations(
+                mask=measure.crop, notes=detected_notes, staff=staff
+            )
             resolve_pitches(detected_notes, clef)
 
             measure.notes = detected_notes
@@ -596,7 +678,9 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
     return intermediates_by_measure
 
 
-def _remove_left_edge_header_bleed(notes: list[Note], staff: Staff, measure_index: int) -> list[Note]:
+def _remove_left_edge_header_bleed(
+    notes: list[Note], staff: Staff, measure_index: int
+) -> list[Note]:
     if measure_index != 0 or len(notes) < 3:
         return notes
     if notes[0].center_x > max(2, int(round(staff.spacing * 0.40))):
@@ -636,8 +720,24 @@ def _create_full_overlays(
         tx, ty = x1, y2 + th + pad + 4
         if ty + 8 > clef_overlay.shape[0]:
             ty = y1 - 8
-        cv.rectangle(clef_overlay, (tx, ty - th - pad), (tx + tw + 2 * pad, ty + baseline + pad), (250, 250, 250), -1)
-        cv.rectangle(clef_overlay, (tx, ty - th - pad), (tx + tw + 2 * pad, ty + baseline + pad), (80, 80, 80), 1)
-        cv.putText(clef_overlay, label, (tx + pad, ty), font, 0.55, (25, 25, 25), 2, cv.LINE_AA)
+        cv.rectangle(
+            clef_overlay,
+            (tx, ty - th - pad),
+            (tx + tw + 2 * pad, ty + baseline + pad),
+            (250, 250, 250),
+            -1,
+        )
+        cv.rectangle(
+            clef_overlay,
+            (tx, ty - th - pad),
+            (tx + tw + 2 * pad, ty + baseline + pad),
+            (80, 80, 80),
+            1,
+        )
+        cv.putText(
+            clef_overlay, label, (tx + pad, ty), font, 0.55, (25, 25, 25), 2, cv.LINE_AA
+        )
 
-    artifacts.write_image(artifacts.sections.clef, "03_full_clef_overlay.jpg", clef_overlay)
+    artifacts.write_image(
+        artifacts.sections.clef, "03_full_clef_overlay.jpg", clef_overlay
+    )

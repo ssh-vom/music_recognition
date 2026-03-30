@@ -42,13 +42,17 @@ def to_gray(image: MatLike) -> MatLike:
 
 def binarize(gray: MatLike) -> MatLike:
     blurred = cv.GaussianBlur(gray, BLUR_KERNEL_SIZE, 0)
-    _, binary = cv.threshold(blurred, MASK_BACKGROUND, MASK_FOREGROUND, cv.THRESH_BINARY_INV + cv.THRESH_OTSU)
+    _, binary = cv.threshold(
+        blurred, MASK_BACKGROUND, MASK_FOREGROUND, cv.THRESH_BINARY_INV + cv.THRESH_OTSU
+    )
     return binary
 
 
 def extract_horizontal_lines(binary: MatLike) -> MatLike:
     image_width = binary.shape[1]
-    kernel_width = max(STAFF_LINE_KERNEL_MIN_WIDTH, int(image_width * STAFF_LINE_KERNEL_WIDTH_FRAC))
+    kernel_width = max(
+        STAFF_LINE_KERNEL_MIN_WIDTH, int(image_width * STAFF_LINE_KERNEL_WIDTH_FRAC)
+    )
     kernel_width = max(1, min(kernel_width, image_width))
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (kernel_width, 1))
     return cv.morphologyEx(binary, cv.MORPH_OPEN, kernel)
@@ -87,7 +91,9 @@ def _cluster_rows(rows: np.ndarray, max_gap: int = LINE_CLUSTER_MAX_GAP) -> list
     return centers
 
 
-def group_into_staves(line_centers: list[int], line_mask: MatLike, shape: tuple) -> list[Staff]:
+def group_into_staves(
+    line_centers: list[int], line_mask: MatLike, shape: tuple
+) -> list[Staff]:
     staffs = []
     gap_count = LINES_PER_STAFF - 1
     i = 0
@@ -101,7 +107,9 @@ def group_into_staves(line_centers: list[int], line_mask: MatLike, shape: tuple)
             i += 1
             continue
 
-        tolerance = max(STAFF_SPACING_TOLERANCE_MIN, mean_gap * STAFF_SPACING_TOLERANCE_FRAC)
+        tolerance = max(
+            STAFF_SPACING_TOLERANCE_MIN, mean_gap * STAFF_SPACING_TOLERANCE_FRAC
+        )
         if not all(abs(g - mean_gap) <= tolerance for g in gaps):
             i += 1
             continue
@@ -141,7 +149,9 @@ def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
 
 def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> MatLike:
     inverted = cv.bitwise_not(gray)
-    bw = cv.adaptiveThreshold(inverted, MASK_FOREGROUND, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2)
+    bw = cv.adaptiveThreshold(
+        inverted, MASK_FOREGROUND, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
+    )
 
     kernel_width = max(1, bw.shape[1] // 30)
     structure = cv.getStructuringElement(cv.MORPH_RECT, (kernel_width, 1))

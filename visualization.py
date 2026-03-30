@@ -8,25 +8,60 @@ from schema import BarLine, ClefDetection, Note, Score, Staff
 
 
 def draw_staff_overlay(image: MatLike, staffs: list[Staff]) -> MatLike:
-    overlay = cv.cvtColor(image, cv.COLOR_GRAY2BGR) if len(image.shape) == 2 else image.copy()
+    overlay = (
+        cv.cvtColor(image, cv.COLOR_GRAY2BGR) if len(image.shape) == 2 else image.copy()
+    )
 
     for idx, staff in enumerate(staffs):
         for line in staff.lines:
-            cv.line(overlay, (line.x_start, line.y), (line.x_end, line.y), (0, 255, 0), 1)
-        cv.rectangle(overlay, (0, staff.top), (overlay.shape[1] - 1, staff.bottom), (255, 0, 0), 1)
+            cv.line(
+                overlay, (line.x_start, line.y), (line.x_end, line.y), (0, 255, 0), 1
+            )
+        cv.rectangle(
+            overlay,
+            (0, staff.top),
+            (overlay.shape[1] - 1, staff.bottom),
+            (255, 0, 0),
+            1,
+        )
         label_y = max(15, staff.top - 5)
-        cv.putText(overlay, f"staff {idx}  spacing={staff.spacing:.1f}px", (10, label_y),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv.LINE_AA)
+        cv.putText(
+            overlay,
+            f"staff {idx}  spacing={staff.spacing:.1f}px",
+            (10, label_y),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            1,
+            cv.LINE_AA,
+        )
 
     return overlay
 
 
-def save_staff_detection(image: MatLike, gray: MatLike, binary: MatLike, line_mask: MatLike, staffs: list[Staff], artifacts) -> dict:
+def save_staff_detection(
+    image: MatLike,
+    gray: MatLike,
+    binary: MatLike,
+    line_mask: MatLike,
+    staffs: list[Staff],
+    artifacts,
+) -> dict:
     paths = {}
-    paths["01_grayscale"] = artifacts.write_image(artifacts.sections.staff, "01_grayscale.jpg", gray)
-    paths["02_otsu_binary"] = artifacts.write_image(artifacts.sections.staff, "02_otsu_binary.jpg", cv.bitwise_not(binary))
-    paths["03_horizontal_lines"] = artifacts.write_image(artifacts.sections.staff, "03_horizontal_lines.jpg", cv.bitwise_not(line_mask))
-    paths["04_staff_overlay"] = artifacts.write_image(artifacts.sections.staff, "04_staff_overlay.jpg", draw_staff_overlay(image, staffs))
+    paths["01_grayscale"] = artifacts.write_image(
+        artifacts.sections.staff, "01_grayscale.jpg", gray
+    )
+    paths["02_otsu_binary"] = artifacts.write_image(
+        artifacts.sections.staff, "02_otsu_binary.jpg", cv.bitwise_not(binary)
+    )
+    paths["03_horizontal_lines"] = artifacts.write_image(
+        artifacts.sections.staff, "03_horizontal_lines.jpg", cv.bitwise_not(line_mask)
+    )
+    paths["04_staff_overlay"] = artifacts.write_image(
+        artifacts.sections.staff,
+        "04_staff_overlay.jpg",
+        draw_staff_overlay(image, staffs),
+    )
     return paths
 
 
@@ -37,36 +72,58 @@ def draw_bars_overlay(image: MatLike, bars: list[BarLine]) -> MatLike:
     return overlay
 
 
-def _get_bar_processing_intermediates(image: MatLike, first_staff: Staff) -> tuple[MatLike | None, MatLike | None]:
+def _get_bar_processing_intermediates(
+    image: MatLike, first_staff: Staff
+) -> tuple[MatLike | None, MatLike | None]:
     y0, y1 = first_staff.top, first_staff.bottom + 1
-    work = image[y0:y1, :][:, int(round(5.0 * first_staff.spacing)):]
+    work = image[y0:y1, :][:, int(round(5.0 * first_staff.spacing)) :]
 
     if work.size == 0:
         return None, None
 
     kernel_h = max(5, int(round(2.0 * first_staff.spacing)))
-    joined = cv.morphologyEx(work, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h)))
+    joined = cv.morphologyEx(
+        work, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h))
+    )
 
     contours, _ = cv.findContours(joined, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    contour_viz = cv.cvtColor(work, cv.COLOR_GRAY2BGR) if len(work.shape) == 2 else work.copy()
+    contour_viz = (
+        cv.cvtColor(work, cv.COLOR_GRAY2BGR) if len(work.shape) == 2 else work.copy()
+    )
     cv.drawContours(contour_viz, contours, -1, (0, 255, 0), 1)
 
     return joined, contour_viz
 
 
-def save_bar_visualization(image: MatLike, bars_mask: MatLike, staffs: list[Staff], bars: list[BarLine], artifacts) -> dict:
+def save_bar_visualization(
+    image: MatLike,
+    bars_mask: MatLike,
+    staffs: list[Staff],
+    bars: list[BarLine],
+    artifacts,
+) -> dict:
     paths = {}
 
-    input_display = cv.bitwise_not(bars_mask) if len(bars_mask.shape) == 2 else bars_mask.copy()
-    paths["01_input_mask"] = artifacts.write_image(artifacts.sections.bars, "01_input_mask.jpg", input_display)
+    input_display = (
+        cv.bitwise_not(bars_mask) if len(bars_mask.shape) == 2 else bars_mask.copy()
+    )
+    paths["01_input_mask"] = artifacts.write_image(
+        artifacts.sections.bars, "01_input_mask.jpg", input_display
+    )
 
     if staffs:
         joined, contour_viz = _get_bar_processing_intermediates(bars_mask, staffs[0])
         if joined is not None:
-            paths["02_vertical_close"] = artifacts.write_image(artifacts.sections.bars, "02_vertical_close.jpg", cv.bitwise_not(joined))
-            paths["03_contours"] = artifacts.write_image(artifacts.sections.bars, "03_contours.jpg", contour_viz)
+            paths["02_vertical_close"] = artifacts.write_image(
+                artifacts.sections.bars, "02_vertical_close.jpg", cv.bitwise_not(joined)
+            )
+            paths["03_contours"] = artifacts.write_image(
+                artifacts.sections.bars, "03_contours.jpg", contour_viz
+            )
 
-    paths["04_bar_overlay"] = artifacts.write_image(artifacts.sections.bars, "04_bar_overlay.jpg", draw_bars_overlay(image, bars))
+    paths["04_bar_overlay"] = artifacts.write_image(
+        artifacts.sections.bars, "04_bar_overlay.jpg", draw_bars_overlay(image, bars)
+    )
     return paths
 
 
@@ -76,11 +133,22 @@ def draw_notes_on_mask(mask: MatLike, notes: list[Note]) -> MatLike:
     for note in notes:
         cv.circle(overlay, (note.center_x, note.center_y), 3, (0, 0, 255), 1)
         conf = note.step_confidence if note.step_confidence else "?"
-        pitch = f"{note.pitch_letter}{note.octave}" if note.pitch_letter and note.octave else "?"
+        pitch = (
+            f"{note.pitch_letter}{note.octave}"
+            if note.pitch_letter and note.octave
+            else "?"
+        )
         dur = note.duration_class if note.duration_class else "?"
-        cv.putText(overlay, f"{note.step} {conf} {pitch} {dur}",
-                   (note.center_x + 4, note.center_y - 4),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1, cv.LINE_AA)
+        cv.putText(
+            overlay,
+            f"{note.step} {conf} {pitch} {dur}",
+            (note.center_x + 4, note.center_y - 4),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 255, 0),
+            1,
+            cv.LINE_AA,
+        )
 
     return overlay
 
@@ -88,8 +156,16 @@ def draw_notes_on_mask(mask: MatLike, notes: list[Note]) -> MatLike:
 def _draw_connected_components(mask: MatLike, count: int, stats, centroids) -> MatLike:
     overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
     colors = [
-        (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255),
-        (0, 255, 255), (128, 255, 0), (255, 128, 0), (128, 0, 255), (0, 128, 255),
+        (255, 0, 0),
+        (0, 255, 0),
+        (0, 0, 255),
+        (255, 255, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+        (128, 255, 0),
+        (255, 128, 0),
+        (128, 0, 255),
+        (0, 128, 255),
     ]
 
     for i in range(1, count):
@@ -102,7 +178,16 @@ def _draw_connected_components(mask: MatLike, count: int, stats, centroids) -> M
         color = colors[i % len(colors)]
         cv.rectangle(overlay, (x, y), (x + w, y + h), color, 1)
         cv.circle(overlay, (cx, cy), 3, color, -1)
-        cv.putText(overlay, str(i), (x, y - 2), cv.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv.LINE_AA)
+        cv.putText(
+            overlay,
+            str(i),
+            (x, y - 2),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            color,
+            1,
+            cv.LINE_AA,
+        )
 
     return overlay
 
@@ -131,12 +216,23 @@ def _draw_filtered_components(mask: MatLike, filtered_info: list[dict]) -> MatLi
 
         cv.rectangle(overlay, (x, y), (x + w, y + h), color, 1)
         cv.circle(overlay, (info["x"], info["y"]), 3, color, -1)
-        cv.putText(overlay, label, (x, y - 2), cv.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv.LINE_AA)
+        cv.putText(
+            overlay,
+            label,
+            (x, y - 2),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            color,
+            1,
+            cv.LINE_AA,
+        )
 
     return overlay
 
 
-def _draw_merge_comparison(mask: MatLike, centers_before: list, centers_after: list) -> MatLike:
+def _draw_merge_comparison(
+    mask: MatLike, centers_before: list, centers_after: list
+) -> MatLike:
     overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
 
     for cx, cy in centers_before:
@@ -147,12 +243,23 @@ def _draw_merge_comparison(mask: MatLike, centers_before: list, centers_after: l
         cv.circle(overlay, (cx, cy), 5, (0, 200, 0), 2)
         cv.circle(overlay, (cx, cy), 3, (0, 200, 0), -1)
         if count > 1:
-            cv.putText(overlay, f"x{count}", (cx + 6, cy - 6), cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 0), 1, cv.LINE_AA)
+            cv.putText(
+                overlay,
+                f"x{count}",
+                (cx + 6, cy - 6),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 200, 0),
+                1,
+                cv.LINE_AA,
+            )
 
     return overlay
 
 
-def _draw_stem_augmentation(mask: MatLike, stem_info: dict, centers_before: list, centers_after: list) -> MatLike:
+def _draw_stem_augmentation(
+    mask: MatLike, stem_info: dict, centers_before: list, centers_after: list
+) -> MatLike:
     overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
 
     for cx, cy, _ in centers_before:
@@ -194,8 +301,12 @@ def save_notes_visualization(
         )
 
     morph_dir = artifacts.ensure_subdir(artifacts.sections.notes, "02_morphological")
-    cc_dir = artifacts.ensure_subdir(artifacts.sections.notes, "03_connected_components")
-    filter_dir = artifacts.ensure_subdir(artifacts.sections.notes, "04_geometric_filtering")
+    cc_dir = artifacts.ensure_subdir(
+        artifacts.sections.notes, "03_connected_components"
+    )
+    filter_dir = artifacts.ensure_subdir(
+        artifacts.sections.notes, "04_geometric_filtering"
+    )
     merge_dir = artifacts.ensure_subdir(artifacts.sections.notes, "05_merge_comparison")
     stem_dir = artifacts.ensure_subdir(artifacts.sections.notes, "06_stem_augmentation")
     final_dir = artifacts.ensure_subdir(artifacts.sections.notes, "07_final_notes")
@@ -207,35 +318,68 @@ def save_notes_visualization(
 
             mask = measure.crop
             key = (staff_idx, measure_idx)
-            intermediates = intermediates_by_measure.get(key) if intermediates_by_measure else None
+            intermediates = (
+                intermediates_by_measure.get(key) if intermediates_by_measure else None
+            )
             prefix = f"staff_{staff_idx}_measure_{measure_idx}"
 
             if intermediates and "opened_mask" in intermediates:
-                cv.imwrite(str(morph_dir / f"{prefix}_opened.jpg"), cv.bitwise_not(intermediates["opened_mask"]))
+                cv.imwrite(
+                    str(morph_dir / f"{prefix}_opened.jpg"),
+                    cv.bitwise_not(intermediates["opened_mask"]),
+                )
             if intermediates and "notehead_mask" in intermediates:
-                cv.imwrite(str(morph_dir / f"{prefix}_notehead.jpg"), cv.bitwise_not(intermediates["notehead_mask"]))
+                cv.imwrite(
+                    str(morph_dir / f"{prefix}_notehead.jpg"),
+                    cv.bitwise_not(intermediates["notehead_mask"]),
+                )
 
             if intermediates and "connected_components" in intermediates:
                 cc_data = intermediates["connected_components"]
-                cc_overlay = _draw_connected_components(mask, cc_data["count"], cc_data["stats"], cc_data["centroids"])
+                cc_overlay = _draw_connected_components(
+                    mask, cc_data["count"], cc_data["stats"], cc_data["centroids"]
+                )
                 cv.imwrite(str(cc_dir / f"{prefix}.jpg"), cc_overlay)
 
             if intermediates and "filtered_components" in intermediates:
-                cv.imwrite(str(filter_dir / f"{prefix}.jpg"), _draw_filtered_components(mask, intermediates["filtered_components"]))
+                cv.imwrite(
+                    str(filter_dir / f"{prefix}.jpg"),
+                    _draw_filtered_components(
+                        mask, intermediates["filtered_components"]
+                    ),
+                )
 
-            if intermediates and "raw_centers_before_merge" in intermediates and "centers_after_merge" in intermediates:
-                cv.imwrite(str(merge_dir / f"{prefix}.jpg"), _draw_merge_comparison(
-                    mask, intermediates["raw_centers_before_merge"], intermediates["centers_after_merge"]
-                ))
+            if (
+                intermediates
+                and "raw_centers_before_merge" in intermediates
+                and "centers_after_merge" in intermediates
+            ):
+                cv.imwrite(
+                    str(merge_dir / f"{prefix}.jpg"),
+                    _draw_merge_comparison(
+                        mask,
+                        intermediates["raw_centers_before_merge"],
+                        intermediates["centers_after_merge"],
+                    ),
+                )
 
             if intermediates and "stem_augmentation" in intermediates:
-                cv.imwrite(str(stem_dir / f"{prefix}.jpg"), _draw_stem_augmentation(
-                    mask, intermediates["stem_augmentation"],
-                    intermediates.get("centers_after_merge", []),
-                    intermediates.get("centers_after_stems", []),
-                ))
+                cv.imwrite(
+                    str(stem_dir / f"{prefix}.jpg"),
+                    _draw_stem_augmentation(
+                        mask,
+                        intermediates["stem_augmentation"],
+                        intermediates.get("centers_after_merge", []),
+                        intermediates.get("centers_after_stems", []),
+                    ),
+                )
 
-            cv.imwrite(str(final_dir / f"{prefix}.jpg"), draw_notes_on_mask(mask, score.get_notes_for_measure(staff_idx, measure_idx)))
+            cv.imwrite(
+                str(final_dir / f"{prefix}.jpg"),
+                draw_notes_on_mask(
+                    mask, score.get_notes_for_measure(staff_idx, measure_idx)
+                ),
+            )
 
     paths["02_morphological"] = morph_dir
     paths["03_connected_components"] = cc_dir
@@ -244,7 +388,9 @@ def save_notes_visualization(
     paths["06_stem_augmentation"] = stem_dir
     paths["07_final_notes"] = final_dir
     paths["08_full_notes_overlay"] = artifacts.write_image(
-        artifacts.sections.notes, "08_full_notes_overlay.jpg", _draw_full_notes_overlay(score)
+        artifacts.sections.notes,
+        "08_full_notes_overlay.jpg",
+        _draw_full_notes_overlay(score),
     )
 
     return paths
@@ -253,31 +399,72 @@ def save_notes_visualization(
 def _draw_full_notes_overlay(score: Score) -> MatLike:
     out = score.sheet_image.copy()
     font = cv.FONT_HERSHEY_SIMPLEX
-    confidence_color = {"high": (0, 180, 0), "medium": (0, 180, 220), "low": (0, 80, 255)}
-    duration_short = {"whole": "w", "half": "h", "quarter": "q", "eighth": "8", "sixteenth": "16"}
+    confidence_color = {
+        "high": (0, 180, 0),
+        "medium": (0, 180, 220),
+        "low": (0, 80, 255),
+    }
+    duration_short = {
+        "whole": "w",
+        "half": "h",
+        "quarter": "q",
+        "eighth": "8",
+        "sixteenth": "16",
+    }
 
     for staff_idx in range(len(score.staffs)):
         for measure_idx, measure in enumerate(score.get_measures_for_staff(staff_idx)):
-            cv.rectangle(out, (measure.x_start, measure.y_top), (measure.x_end - 1, measure.y_bottom), (120, 120, 120), 1)
+            cv.rectangle(
+                out,
+                (measure.x_start, measure.y_top),
+                (measure.x_end - 1, measure.y_bottom),
+                (120, 120, 120),
+                1,
+            )
             for note in score.get_notes_for_measure(staff_idx, measure_idx):
                 abs_x = measure.x_start + note.center_x
                 abs_y = measure.y_top + note.center_y
-                color = confidence_color.get(note.step_confidence or "unknown", (160, 160, 160))
+                color = confidence_color.get(
+                    note.step_confidence or "unknown", (160, 160, 160)
+                )
                 cv.circle(out, (abs_x, abs_y), 4, color, 2)
-                pitch = f"{note.pitch_letter}{note.octave}" if note.pitch_letter and note.octave else "?"
-                dur = duration_short.get(note.duration_class or "", note.duration_class or "?")
-                cv.putText(out, f"{note.step} {pitch} {dur}", (abs_x + 5, abs_y - 5), font, 0.35, color, 1, cv.LINE_AA)
+                pitch = (
+                    f"{note.pitch_letter}{note.octave}"
+                    if note.pitch_letter and note.octave
+                    else "?"
+                )
+                dur = duration_short.get(
+                    note.duration_class or "", note.duration_class or "?"
+                )
+                cv.putText(
+                    out,
+                    f"{note.step} {pitch} {dur}",
+                    (abs_x + 5, abs_y - 5),
+                    font,
+                    0.35,
+                    color,
+                    1,
+                    cv.LINE_AA,
+                )
 
     return out
 
 
-def draw_clef_overlay(clef_crop: MatLike, detection: ClefDetection, clef_kind: str | None) -> MatLike:
-    overlay = cv.cvtColor(cv.bitwise_not(clef_crop), cv.COLOR_GRAY2BGR) if len(clef_crop.shape) == 2 else clef_crop.copy()
+def draw_clef_overlay(
+    clef_crop: MatLike, detection: ClefDetection, clef_kind: str | None
+) -> MatLike:
+    overlay = (
+        cv.cvtColor(cv.bitwise_not(clef_crop), cv.COLOR_GRAY2BGR)
+        if len(clef_crop.shape) == 2
+        else clef_crop.copy()
+    )
 
     if clef_kind is None or detection is None:
         return overlay
 
-    cv.rectangle(overlay, (0, 0), (overlay.shape[1], overlay.shape[0]), (100, 100, 100), 1)
+    cv.rectangle(
+        overlay, (0, 0), (overlay.shape[1], overlay.shape[0]), (100, 100, 100), 1
+    )
 
     choice = choose_clef_overlay_rect(clef_kind, detection)
     if choice is not None:
@@ -286,7 +473,16 @@ def draw_clef_overlay(clef_crop: MatLike, detection: ClefDetection, clef_kind: s
 
     name = clef_kind if clef_kind else "?"
     label = f"{name}  T={detection.letter_score_treble:.2f} B={detection.letter_score_bass:.2f}"
-    cv.putText(overlay, label, (6, 22), cv.FONT_HERSHEY_SIMPLEX, 0.55, (30, 30, 30), 2, cv.LINE_AA)
+    cv.putText(
+        overlay,
+        label,
+        (6, 22),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (30, 30, 30),
+        2,
+        cv.LINE_AA,
+    )
 
     return overlay
 
@@ -312,7 +508,10 @@ def choose_clef_overlay_rect(
         w, h = detection.bass_match_size
         return (x, y, w, h), (0, 120, 255)
 
-    if detection.treble_match_top_left is not None and detection.treble_match_size is not None:
+    if (
+        detection.treble_match_top_left is not None
+        and detection.treble_match_size is not None
+    ):
         x, y = detection.treble_match_top_left
         w, h = detection.treble_match_size
         return (x, y, w, h), (180, 180, 180)
@@ -345,15 +544,28 @@ def draw_measure_boundaries(image: MatLike, measures_map: dict[int, list]) -> Ma
     overlay = image.copy()
     for staff_index, measures in measures_map.items():
         for measure in measures:
-            cv.rectangle(overlay, (measure.x_start, measure.y_top), (measure.x_end - 1, measure.y_bottom), (255, 0, 0), 1)
+            cv.rectangle(
+                overlay,
+                (measure.x_start, measure.y_top),
+                (measure.x_end - 1, measure.y_bottom),
+                (255, 0, 0),
+                1,
+            )
     return overlay
 
 
-def save_measure_visualization(sheet_image: MatLike, measures_map: dict[int, list], measure_crops: dict[int, list[MatLike]], artifacts) -> dict:
+def save_measure_visualization(
+    sheet_image: MatLike,
+    measures_map: dict[int, list],
+    measure_crops: dict[int, list[MatLike]],
+    artifacts,
+) -> dict:
     paths = {}
 
     paths["01_measure_boundaries"] = artifacts.write_image(
-        artifacts.sections.pipeline, "01_measure_boundaries.jpg", draw_measure_boundaries(sheet_image, measures_map)
+        artifacts.sections.pipeline,
+        "01_measure_boundaries.jpg",
+        draw_measure_boundaries(sheet_image, measures_map),
     )
 
     crops_dir = artifacts.ensure_subdir(artifacts.sections.pipeline, "02_measure_crops")
@@ -368,10 +580,17 @@ def save_measure_visualization(sheet_image: MatLike, measures_map: dict[int, lis
     return paths
 
 
-def save_clef_visualization(clef_key_crops: dict[int, MatLike], clefs_by_staff: dict, clef_detections: dict[int, ClefDetection], artifacts) -> dict:
+def save_clef_visualization(
+    clef_key_crops: dict[int, MatLike],
+    clefs_by_staff: dict,
+    clef_detections: dict[int, ClefDetection],
+    artifacts,
+) -> dict:
     paths = {}
 
-    clef_crops_dir = artifacts.ensure_subdir(artifacts.sections.clef, "01_clef_header_crops")
+    clef_crops_dir = artifacts.ensure_subdir(
+        artifacts.sections.clef, "01_clef_header_crops"
+    )
     for staff_index, crop in clef_key_crops.items():
         display_crop = cv.bitwise_not(crop) if len(crop.shape) == 2 else crop
         cv.imwrite(str(clef_crops_dir / f"staff_{staff_index}.jpg"), display_crop)
@@ -383,7 +602,9 @@ def save_clef_visualization(clef_key_crops: dict[int, MatLike], clefs_by_staff: 
         if detection is not None:
             overlay = draw_clef_overlay(crop, detection, clef.kind if clef else None)
             paths[f"02_detection_staff_{staff_index}"] = artifacts.write_image(
-                artifacts.sections.clef, f"02_detection_staff_{staff_index}.jpg", overlay
+                artifacts.sections.clef,
+                f"02_detection_staff_{staff_index}.jpg",
+                overlay,
             )
 
     return paths
@@ -393,10 +614,25 @@ def draw_accidentals_overlay(image: MatLike, accidentals: list) -> MatLike:
     out = image.copy()
     for acc in accidentals:
         color = (255, 0, 255) if acc.kind == "sharp" else (255, 128, 0)
-        cv.drawMarker(out, (acc.center_x, acc.center_y), color,
-                      markerType=cv.MARKER_CROSS, markerSize=10, thickness=1, line_type=cv.LINE_AA)
-        cv.putText(out, acc.kind[0].upper(), (acc.center_x + 6, acc.center_y + 4),
-                   cv.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv.LINE_AA)
+        cv.drawMarker(
+            out,
+            (acc.center_x, acc.center_y),
+            color,
+            markerType=cv.MARKER_CROSS,
+            markerSize=10,
+            thickness=1,
+            line_type=cv.LINE_AA,
+        )
+        cv.putText(
+            out,
+            acc.kind[0].upper(),
+            (acc.center_x + 6, acc.center_y + 4),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            color,
+            1,
+            cv.LINE_AA,
+        )
     return out
 
 

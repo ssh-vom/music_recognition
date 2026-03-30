@@ -33,9 +33,13 @@ def format_accidental_log(score: Score) -> str:
     glyphs = clef.key_header_glyphs
     sharps = sum(1 for g in glyphs if g.kind == "sharp")
     flats = sum(1 for g in glyphs if g.kind == "flat")
-    lines = [f"staff 0 header accidentals: sharps={sharps} flats={flats} total={len(glyphs)}\n"]
+    lines = [
+        f"staff 0 header accidentals: sharps={sharps} flats={flats} total={len(glyphs)}\n"
+    ]
     for g in glyphs:
-        lines.append(f"  kind={g.kind:<5} x={g.center_x:>4}, y={g.center_y:>4}, conf={g.confidence:.3f}\n")
+        lines.append(
+            f"  kind={g.kind:<5} x={g.center_x:>4}, y={g.center_y:>4}, conf={g.confidence:.3f}\n"
+        )
     return "".join(lines)
 
 
@@ -74,8 +78,21 @@ def abc_key_from_score(score: Score) -> str:
 
 def abc_key_from_fifths(fifths: int) -> str:
     major_keys = {
-        -7: "Cb", -6: "Gb", -5: "Db", -4: "Ab", -3: "Eb", -2: "Bb", -1: "F",
-        0: "C", 1: "G", 2: "D", 3: "A", 4: "E", 5: "B", 6: "F#", 7: "C#",
+        -7: "Cb",
+        -6: "Gb",
+        -5: "Db",
+        -4: "Ab",
+        -3: "Eb",
+        -2: "Bb",
+        -1: "F",
+        0: "C",
+        1: "G",
+        2: "D",
+        3: "A",
+        4: "E",
+        5: "B",
+        6: "F#",
+        7: "C#",
     }
     return major_keys.get(fifths, DEFAULT_KEY)
 
@@ -83,13 +100,17 @@ def abc_key_from_fifths(fifths: int) -> str:
 def format_note_log(score: Score) -> str:
     notes_by_measure: dict[tuple[int, int], list] = {}
     for note in score.notes:
-        notes_by_measure.setdefault((note.staff_index, note.measure_index), []).append(note)
+        notes_by_measure.setdefault((note.staff_index, note.measure_index), []).append(
+            note
+        )
 
     lines = []
     for staff_index in range(len(score.staffs)):
         for measure_index, _ in enumerate(score.get_measures_for_staff(staff_index)):
             notes = notes_by_measure.get((staff_index, measure_index), [])
-            lines.append(f"staff {staff_index}, measure {measure_index}: {len(notes)} noteheads detected\n")
+            lines.append(
+                f"staff {staff_index}, measure {measure_index}: {len(notes)} noteheads detected\n"
+            )
             for note in notes:
                 pitch = (
                     f"{note.pitch_letter}{note.octave}"

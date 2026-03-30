@@ -6,12 +6,15 @@ from cv2.typing import MatLike
 
 from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
 from schema import DurationClass, Note, Staff
+
 COMPACT_GAP_MIN_FRAC = 1.2
 COMPACT_GAP_MAX_FRAC = 3.6
 COMPACT_RUN_MIN_EVENTS = 4
 
 
-def refine_beamed_durations(mask: MatLike, notes: list[Note], staff: Staff) -> list[Note]:
+def refine_beamed_durations(
+    mask: MatLike, notes: list[Note], staff: Staff
+) -> list[Note]:
     """Update duration_class for notes connected by beams (never adds new notes)."""
     if len(notes) < 2:
         return notes
@@ -33,7 +36,9 @@ def refine_beamed_durations(mask: MatLike, notes: list[Note], staff: Staff) -> l
         if beam_count > 0:
             for idx, note in note_group:
                 if note.duration_class == "quarter":
-                    notes[idx].duration_class = "eighth" if beam_count == 1 else "sixteenth"
+                    notes[idx].duration_class = (
+                        "eighth" if beam_count == 1 else "sixteenth"
+                    )
 
     _apply_compact_spacing_fallback(notes, staff.spacing)
     return notes
@@ -75,7 +80,9 @@ def _apply_compact_spacing_fallback(notes: list[Note], spacing: float) -> None:
                 break
 
         run_events = events[start : end + 1]
-        if len(run_events) >= COMPACT_RUN_MIN_EVENTS and _run_can_be_eighths(run_events, spacing):
+        if len(run_events) >= COMPACT_RUN_MIN_EVENTS and _run_can_be_eighths(
+            run_events, spacing
+        ):
             for event in run_events:
                 for note in event:
                     if note.duration_class in ("quarter", None):
@@ -97,7 +104,9 @@ def _run_can_be_eighths(run_events: list[list[Note]], spacing: float) -> bool:
     return len(set(steps)) >= 2
 
 
-def _detect_beam_count(mask: MatLike, note_group: list[tuple[int, Note]], staff: Staff) -> int:
+def _detect_beam_count(
+    mask: MatLike, note_group: list[tuple[int, Note]], staff: Staff
+) -> int:
     if len(note_group) < 2:
         return 0
 
@@ -182,7 +191,9 @@ def _estimate_stem_direction(mask: MatLike, note: Note, spacing: float) -> str:
     return "down" if note.step > 0 else "up"
 
 
-def _find_stem_endpoint(mask: MatLike, note: Note, spacing: float, direction: str) -> int | None:
+def _find_stem_endpoint(
+    mask: MatLike, note: Note, spacing: float, direction: str
+) -> int | None:
     cx, cy = note.center_x, note.center_y
     h, w = mask.shape
     x_radius = int(spacing * 0.4)

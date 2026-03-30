@@ -28,7 +28,9 @@ def split_measures(
         )
 
     if 0 in measures_map:
-        _apply_first_staff_start_policy(measures_map, staffs, first_staff_conservative_spacings)
+        _apply_first_staff_start_policy(
+            measures_map, staffs, first_staff_conservative_spacings
+        )
 
     return measures_map
 
@@ -69,11 +71,20 @@ def _usable_bars(staff_bars: list, content_start_x: int, staff_right: int) -> li
 def _build_measure(x_start: int, x_end: int, staff, staff_index: int) -> Measure | None:
     if x_end - x_start < MIN_WIDTH_PX:
         return None
-    return Measure(x_start=x_start, x_end=x_end, y_top=staff.top, y_bottom=staff.bottom, staff_index=staff_index)
+    return Measure(
+        x_start=x_start,
+        x_end=x_end,
+        y_top=staff.top,
+        y_bottom=staff.bottom,
+        staff_index=staff_index,
+    )
 
 
 def _split_staff(
-    staff, staff_index: int, staff_bars: list, left_header_spacings: float = LEFT_HEADER_SPACINGS
+    staff,
+    staff_index: int,
+    staff_bars: list,
+    left_header_spacings: float = LEFT_HEADER_SPACINGS,
 ) -> list[Measure]:
     if not staff.lines:
         return []
@@ -96,7 +107,10 @@ def _split_staff(
 
     for index, bar in enumerate(usable_bars):
         if bar.kind == "double_left":
-            if index + 1 < len(usable_bars) and usable_bars[index + 1].kind == "double_right":
+            if (
+                index + 1 < len(usable_bars)
+                and usable_bars[index + 1].kind == "double_right"
+            ):
                 continue
         elif bar.kind == "double_right":
             pass
@@ -124,7 +138,9 @@ def _apply_first_staff_start_policy(
     if 0 not in measures_map or not measures_map[0]:
         return
     first_staff = staffs[0]
-    conservative_start = _staff_left(first_staff) + int(round(first_staff.spacing * spacings))
+    conservative_start = _staff_left(first_staff) + int(
+        round(first_staff.spacing * spacings)
+    )
     measures_map[0][0].x_start = max(measures_map[0][0].x_start, conservative_start)
 
 
@@ -138,7 +154,9 @@ def crop_measures(
     for staff_index, measures in measures_map.items():
         staff_crops = []
         for measure in measures:
-            crop = notes_image[measure.y_top : measure.y_bottom + 1, measure.x_start : measure.x_end]
+            crop = notes_image[
+                measure.y_top : measure.y_bottom + 1, measure.x_start : measure.x_end
+            ]
             staff_crops.append(crop)
         crops[staff_index] = staff_crops
 

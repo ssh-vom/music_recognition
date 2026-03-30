@@ -79,4 +79,4 @@ def _closing_bars_for_measures(
                 continue
         closers.append(bar)
 
-    return closers[:max(0, len(staff_measures) - 1)]
+    return closers[: max(0, len(staff_measures) - 1)]
