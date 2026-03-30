@@ -1,4 +1,4 @@
-"""Build Score object from detection results - flat data structure."""
+"""Build Score object from detection results."""
 
 from cv2.typing import MatLike
 
@@ -19,7 +19,6 @@ def build_score(
     notes_mask: MatLike,
     bars_mask: MatLike,
 ) -> Score:
-    """Build flat Score structure from all detection results."""
     bars_by_staff: dict[int, list[BarLine]] = {i: [] for i in range(len(staffs))}
     for bar in bars:
         if 0 <= bar.staff_index < len(staffs):
@@ -64,10 +63,8 @@ def build_score(
 
 
 def _closing_bars_for_measures(
-    staff_bars: list[BarLine],
-    staff_measures: list[Measure],
+    staff_bars: list[BarLine], staff_measures: list[Measure]
 ) -> list[BarLine]:
-    """Find bar lines that close each measure (except the last one)."""
     if not staff_bars or not staff_measures:
         return []
 
@@ -82,10 +79,4 @@ def _closing_bars_for_measures(
                 continue
         closers.append(bar)
 
-    needed = max(0, len(staff_measures) - 1)
-    return closers[:needed]
-
-
-def build_score_tree(*args, **kwargs) -> Score:
-    """Alias for build_score."""
-    return build_score(*args, **kwargs)
+    return closers[:max(0, len(staff_measures) - 1)]

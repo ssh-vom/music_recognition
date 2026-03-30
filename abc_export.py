@@ -35,17 +35,7 @@ def write_abc_file(
     return abc_text
 
 
-def build_abc_text(
-    score,
-    *,
-    title,
-    reference_number,
-    meter,
-    unit_note_length,
-    key,
-    tempo_qpm,
-    melody_only=False,
-):
+def build_abc_text(score, *, title, reference_number, meter, unit_note_length, key, tempo_qpm, melody_only=False):
     header_lines = [
         f"X:{reference_number}",
         f"T:{title}",
@@ -54,24 +44,13 @@ def build_abc_text(
         f"Q:1/4={tempo_qpm}",
         f"K:{key}",
     ]
-    body = notes_to_abc_body(
-        score=score,
-        meter=meter,
-        key=key,
-        melody_only=melody_only,
-    )
+    body = notes_to_abc_body(score=score, meter=meter, key=key, melody_only=melody_only)
     return "\n".join(header_lines) + "\n" + body + "\n"
 
 
 def notes_to_abc_body(score, *, meter, key, melody_only=False):
-    # Handle both old ScoreTree and new Score structure
     if hasattr(score, "staff_nodes"):
-        return _notes_to_abc_body_legacy(
-            score,
-            meter,
-            key,
-            melody_only=melody_only,
-        )
+        return _notes_to_abc_body_legacy(score, meter, key, melody_only=melody_only)
 
     staff_lines = []
     default_rest = _default_measure_rest(meter)
@@ -86,43 +65,30 @@ def notes_to_abc_body(score, *, meter, key, melody_only=False):
             continue
 
         segments = []
-
-        start_repeat = _has_left_begin_repeat_flat(staff_bars, staff_measures)
-        if start_repeat:
+        if _has_left_begin_repeat_flat(staff_bars, staff_measures):
             segments.append("|:")
         else:
             segments.append("|")
 
         for measure_index, measure in enumerate(staff_measures):
             notes = score.get_notes_for_measure(staff_index, measure_index)
-
             tokens = _notes_to_measure_tokens(
                 notes=notes,
                 beats_per_measure=beats_per_measure,
                 key_accidentals=key_accidentals,
                 melody_only=melody_only,
             )
-            if not tokens:
-                tokens = [default_rest]
-
-            segments.append(" ".join(tokens))
+            segments.append(" ".join(tokens) if tokens else default_rest)
 
             if measure_index < len(staff_measures) - 1:
-                boundary_bar = measure.closing_bar
-                segments.append(_boundary_separator(boundary_bar))
+                segments.append(_boundary_separator(measure.closing_bar))
             else:
                 end_bar = _find_end_bar(staff_bars, staff_measures)
-                if end_bar is not None and end_bar.repeat == "end":
-                    segments.append(":|")
-                else:
-                    segments.append("|")
+                segments.append(":|" if end_bar is not None and end_bar.repeat == "end" else "|")
 
         staff_lines.append(" ".join(segments))
 
-    if len(staff_lines) == 0:
-        return f"| {default_rest} |"
-
-    return "\n".join(staff_lines)
+    return "\n".join(staff_lines) if staff_lines else f"| {default_rest} |"
 
 
 def _notes_to_abc_body_legacy(score_tree, meter, key, melody_only=False):
@@ -136,8 +102,7 @@ def _notes_to_abc_body_legacy(score_tree, meter, key, melody_only=False):
             continue
         segments = []
 
-        start_repeat = _has_left_begin_repeat_legacy(staff_node)
-        if start_repeat:
+        if _has_left_begin_repeat_legacy(staff_node):
             segments.append("|:")
         else:
             segments.append("|")
@@ -149,68 +114,39 @@ def _notes_to_abc_body_legacy(score_tree, meter, key, melody_only=False):
                 key_accidentals=key_accidentals,
                 melody_only=melody_only,
             )
-            if not tokens:
-                tokens = [default_rest]
-
-            segments.append(" ".join(tokens))
+            segments.append(" ".join(tokens) if tokens else default_rest)
 
             if measure_index < len(staff_node.measures) - 1:
-                boundary_bar = measure_node.closing_bar
-                segments.append(_boundary_separator(boundary_bar))
+                segments.append(_boundary_separator(measure_node.closing_bar))
             else:
                 staff_end_bar = staff_node.end_bar
-                if staff_end_bar is not None and staff_end_bar.repeat == "end":
-                    segments.append(":|")
-                else:
-                    segments.append("|")
+                segments.append(":|" if staff_end_bar is not None and staff_end_bar.repeat == "end" else "|")
 
         staff_lines.append(" ".join(segments))
 
-    if len(staff_lines) == 0:
-        return f"| {default_rest} |"
-
-    return "\n".join(staff_lines)
+    return "\n".join(staff_lines) if staff_lines else f"| {default_rest} |"
 
 
 def _has_left_begin_repeat_legacy(staff_node):
-    if not staff_node.bars:
+    if not staff_node.bars or not staff_node.measures:
         return False
-    if not staff_node.measures:
-        return False
-
     first_measure = staff_node.measures[0].measure
-    tol = 8
-    for bar in staff_node.bars:
-        if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
-            return True
-    return False
+    return any(bar.x <= first_measure.x_start + 8 and bar.repeat == "begin" for bar in staff_node.bars)
 
 
 def _has_left_begin_repeat_flat(staff_bars: list[BarLine], staff_measures: list) -> bool:
     if not staff_bars or not staff_measures:
         return False
-
     first_measure = staff_measures[0]
-    tol = 8
-    for bar in staff_bars:
-        if bar.x <= first_measure.x_start + tol and bar.repeat == "begin":
-            return True
-    return False
+    return any(bar.x <= first_measure.x_start + 8 and bar.repeat == "begin" for bar in staff_bars)
 
 
 def _find_end_bar(staff_bars: list[BarLine], staff_measures: list) -> BarLine | None:
     if not staff_measures:
         return None
-
     last_measure = staff_measures[-1]
-    tol = 10
-
-    right_candidates = [
-        bar for bar in staff_bars if bar.x >= (last_measure.x_end - tol)
-    ]
-    if not right_candidates:
-        return None
-    return max(right_candidates, key=lambda bar: bar.x)
+    right_candidates = [bar for bar in staff_bars if bar.x >= (last_measure.x_end - 10)]
+    return max(right_candidates, key=lambda bar: bar.x) if right_candidates else None
 
 
 def _default_measure_rest(meter):
@@ -241,12 +177,7 @@ def _boundary_separator(bar):
     return "|"
 
 
-def _notes_to_measure_tokens(
-    notes,
-    beats_per_measure,
-    key_accidentals,
-    melody_only=False,
-):
+def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals, melody_only=False):
     if not notes:
         return []
 
@@ -257,11 +188,7 @@ def _notes_to_measure_tokens(
     event_tokens = []
     beats = []
     for event_notes in events:
-        token = _event_to_abc_pitch(
-            event_notes,
-            key_accidentals=key_accidentals,
-            melody_only=melody_only,
-        )
+        token = _event_to_abc_pitch(event_notes, key_accidentals=key_accidentals, melody_only=melody_only)
         if token is None:
             continue
         event_tokens.append(token)
@@ -270,7 +197,6 @@ def _notes_to_measure_tokens(
     if not event_tokens:
         return []
 
-    # Stretch last note for simple quarter/half measures that are ~1 beat short
     total = sum(beats)
     deficit = beats_per_measure - total
     has_subquarter = any(beat < 1.0 for beat in beats)
@@ -281,7 +207,6 @@ def _notes_to_measure_tokens(
 
 
 def _format_tokens_with_beams(event_tokens, beats):
-    # In ABC, adjacent short notes need no spaces to beam together
     formatted = []
     beam_run = ""
     beam_run_beats = 0.0
@@ -313,7 +238,6 @@ def _format_tokens_with_beams(event_tokens, beats):
 
 
 def _group_notes_into_events(notes):
-    # Group notes at similar x-positions to avoid duplicate detections
     ordered = sorted(notes, key=lambda note: (note.center_x, note.center_y))
     events = []
 
@@ -321,11 +245,8 @@ def _group_notes_into_events(notes):
         if not events:
             events.append([note])
             continue
-
         last_event = events[-1]
-        anchor_x = round(
-            sum(existing.center_x for existing in last_event) / float(len(last_event))
-        )
+        anchor_x = round(sum(n.center_x for n in last_event) / float(len(last_event)))
         if abs(note.center_x - anchor_x) <= EVENT_X_TOLERANCE_PX:
             last_event.append(note)
         else:
@@ -355,9 +276,7 @@ def _event_to_abc_pitch(event_notes, key_accidentals, melody_only=False):
 
 
 def _chord_note_sort_key(note):
-    octave = note.octave if note.octave is not None else 0
-    letter = note.pitch_letter or ""
-    return (octave, letter, note.center_y)
+    return (note.octave if note.octave is not None else 0, note.pitch_letter or "", note.center_y)
 
 
 def _event_beats(event_notes):
@@ -366,15 +285,12 @@ def _event_beats(event_notes):
         for note in event_notes
         if note.duration_class is not None or note.pitch_letter is not None
     ]
-    if not beats:
-        return 1.0
-    return min(beats)
+    return min(beats) if beats else 1.0
 
 
 def _note_to_abc_pitch(note, key_accidentals):
     if note.pitch_letter is None or note.octave is None:
         return None
-
     return _pitch_to_abc(note.pitch_letter, note.octave, key_accidentals)
 
 
@@ -390,13 +306,10 @@ def _pitch_to_abc(pitch_letter, octave, key_accidentals):
         accidental = "_"
 
     if octave >= 5:
-        letter = base.lower()
         apostrophes = "'" * (octave - 5)
-        return f"{accidental}{letter}{apostrophes}"
+        return f"{accidental}{base.lower()}{apostrophes}"
 
-    letter = base
-    commas = "," * max(0, 4 - octave)
-    return f"{accidental}{letter}{commas}"
+    return f"{accidental}{base}{',' * max(0, 4 - octave)}"
 
 
 SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")
@@ -405,28 +318,12 @@ FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
 
 def _abc_key_signature_accidentals(key: str) -> dict[str, str]:
     major_fifths = {
-        "CB": -7,
-        "GB": -6,
-        "DB": -5,
-        "AB": -4,
-        "EB": -3,
-        "BB": -2,
-        "F": -1,
-        "C": 0,
-        "G": 1,
-        "D": 2,
-        "A": 3,
-        "E": 4,
-        "B": 5,
-        "F#": 6,
-        "C#": 7,
+        "CB": -7, "GB": -6, "DB": -5, "AB": -4, "EB": -3, "BB": -2, "F": -1,
+        "C": 0, "G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "F#": 6, "C#": 7,
     }
 
-    normalized = (key or "C").strip()
-    if not normalized:
-        normalized = "C"
-    tonic = normalized.split()[0]
-    tonic = tonic.replace("♭", "b").replace("♯", "#")
+    normalized = (key or "C").strip() or "C"
+    tonic = normalized.split()[0].replace("♭", "b").replace("♯", "#")
     tonic_upper = tonic[0].upper() + tonic[1:]
     fifths = major_fifths.get(tonic_upper.upper(), major_fifths.get(tonic_upper, 0))
 
@@ -455,24 +352,19 @@ def _note_base_beats(note):
 def _beats_to_abc_suffix(beats):
     rounded = int(round(beats))
     if abs(beats - rounded) < 1e-6:
-        if rounded <= 1:
-            return ""  # Quarter note is default
-        return str(rounded)
-
+        return "" if rounded <= 1 else str(rounded)
     if abs(beats - 0.5) < 1e-6:
-        return "/2"  # Eighth note
+        return "/2"
     if abs(beats - 0.25) < 1e-6:
-        return "/4"  # Sixteenth note
-
+        return "/4"
     if beats > 0:
         for denom in [2, 4, 8]:
             numer = beats * denom
             if abs(numer - round(numer)) < 1e-6:
                 numer = int(round(numer))
                 if numer == denom:
-                    return ""  # Quarter
+                    return ""
                 if numer == 1:
                     return f"/{denom}"
                 return f"{numer}/{denom}"
-
     return ""

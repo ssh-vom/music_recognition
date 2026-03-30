@@ -144,6 +144,3 @@ class Score:
 
     def get_bars_for_staff(self, staff_index: int) -> list[BarLine]:
         return [b for b in self.bars if b.staff_index == staff_index]
-
-
-ScoreTree = Score
