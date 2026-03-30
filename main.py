@@ -1,58 +1,42 @@
-import os
-import re
-import cv2 as cv
-from cv2.typing import MatLike
-import pytesseract
-from music21 import converter
-from tunes_processing import preprocess_tunes
+"""Main entry point - scans music_sheets/ directory and processes all sheet music."""
+
+from pathlib import Path
+
+from pipeline import run_pipeline
+
 
 def main():
+    """Process all sheet music images in the music_sheets/ directory."""
+    music_dir = Path("./music_sheets")
 
-    I = cv.imread(filename="./twinkle_twinkle_little_star.png")
-    if I is None:
-        raise FileNotFoundError(
-            "Could not load image: ./twinkle_twinkle_little_star.png"
-        )
+    if not music_dir.exists():
+        print(f"Error: Directory {music_dir} not found")
+        return
 
-    J = preprocess(I)
-    bpm, raw = extract_bpm(J)
-    print("BPM:", bpm, "| OCR:", raw)
-    play_music()
-    cv.imshow(winname="filtered", mat=J)
+    # Find all PNG images in the music_sheets directory
+    image_paths = sorted(music_dir.glob("*.png"))
 
-    cv.waitKey(0)
-    cv.destroyAllWindows()
-    return
+    if not image_paths:
+        print(f"No PNG images found in {music_dir}")
+        return
 
+    print(f"Found {len(image_paths)} sheet music image(s) to process")
+    print("=" * 60)
 
-def preprocess(I: MatLike):
+    # Process each image
+    for image_path in image_paths:
+        try:
+            run_pipeline(str(image_path), show_windows=False)
+        except Exception as e:
+            print(f"ERROR processing {image_path}: {e}")
+            import traceback
 
-    # CROPPING STAGE
-    height = I.shape[0]
-    top_crop = int(0.18 * height)
-    bottom_crop = int(0.8 * height)
-    J = I[top_crop:bottom_crop, :]
+            traceback.print_exc()
+            continue
 
-    # filter, J = cv.threshold(src=I, thresh=0.0, maxval=255.0, type=0)
-
-    return J
-
-
-def extract_bpm(I: MatLike) -> tuple[int | None, str | None]:
-    # Grab tempo from the top left
-    h, w = I.shape[0], I.shape[1]
-    roi = I[0 : int(h * 0.1), 0 : int(w * 0.2)]
-    txt = pytesseract.image_to_string(
-        roi, config="--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789="
-    )
-    m = re.search(r"(\d{2,3})", txt)
-
-    if not m:
-        return None, txt
-    bpm = int(m.group(1))
-    if not (20 <= bpm <= 320):
-        return None, txt
-    return bpm, txt
+    print("\n" + "=" * 60)
+    print("All images processed successfully!")
+    print("=" * 60)
 
 
 def play_music():
