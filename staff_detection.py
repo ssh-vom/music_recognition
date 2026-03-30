@@ -139,7 +139,7 @@ def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
     return _repair_slits(result, staffs)
 
 
-def erase_staff_for_notes(gray: MatLike, staffs: list[Staff] | None = None) -> MatLike:
+def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> MatLike:
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(inverted, MASK_FOREGROUND, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2)
 
@@ -147,12 +147,9 @@ def erase_staff_for_notes(gray: MatLike, staffs: list[Staff] | None = None) -> M
     structure = cv.getStructuringElement(cv.MORPH_RECT, (kernel_width, 1))
     staff_reconstruction = cv.dilate(cv.erode(bw, structure), structure)
 
-    if staffs is not None:
-        allowed = _staff_removal_band_mask(bw.shape, staffs)
-        result = cv.subtract(bw, cv.bitwise_and(staff_reconstruction, allowed))
-        return _repair_slits(result, staffs)
-    else:
-        return cv.subtract(bw, staff_reconstruction)
+    allowed = _staff_removal_band_mask(bw.shape, staffs)
+    result = cv.subtract(bw, cv.bitwise_and(staff_reconstruction, allowed))
+    return _repair_slits(result, staffs)
 
 
 def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:

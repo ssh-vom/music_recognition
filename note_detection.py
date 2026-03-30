@@ -53,17 +53,15 @@ def find_notes(
     staff: Staff,
     measure: Measure,
     measure_index: int,
-    return_intermediates: bool = False,
-):
+) -> tuple[list[Note], dict]:
     """Detect noteheads in a measure and return Note objects with pitch/duration."""
-    intermediates = {} if return_intermediates else None
+    intermediates: dict = {}
 
     notehead_mask = _extract_notehead_mask(mask, staff.spacing)
     secondary_mask = _create_secondary_mask(mask)
 
-    if intermediates is not None:
-        intermediates["notehead_mask"] = notehead_mask.copy()
-        intermediates["secondary_mask"] = secondary_mask.copy()
+    intermediates["notehead_mask"] = notehead_mask.copy()
+    intermediates["secondary_mask"] = secondary_mask.copy()
 
     components = cv.connectedComponentsWithStats(notehead_mask, connectivity=8)
     secondary = cv.connectedComponentsWithStats(secondary_mask, connectivity=8)
@@ -73,18 +71,15 @@ def find_notes(
     merge_distance = max(2, int(round(staff.spacing * NOTE_MERGE_DISTANCE_FRAC)))
     centers = _merge_nearby_centers(centers, merge_distance)
 
-    if intermediates is not None:
-        intermediates["centers_after_merge"] = centers.copy()
+    intermediates["centers_after_merge"] = centers.copy()
 
     centers = _add_stem_centers(mask, centers, staff.spacing, merge_distance, intermediates)
 
     notes = _resolve_notes(centers, mask, staff, measure, measure_index)
     notes = _merge_duplicate_detections(notes, staff.spacing, mask)
 
-    if intermediates is not None:
-        intermediates["final_notes"] = notes
-        return notes, intermediates
-    return notes
+    intermediates["final_notes"] = notes
+    return notes, intermediates
 
 
 def _extract_notehead_mask(mask: MatLike, spacing: float) -> MatLike:

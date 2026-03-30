@@ -1,4 +1,7 @@
-"""Clef detection - classify treble vs bass clef using template matching."""
+"""Clef detection - classify treble vs bass clef using template matching.
+Based largely on the content below, but optimized for treble and bass clef
+https://docs.opencv.org/3.4/d4/dc6/tutorial_py_template_matching.html
+"""
 
 from pathlib import Path
 
@@ -82,14 +85,14 @@ def _trim_white_border(gray: MatLike, thresh: int = CLEF_TRIM_WHITE_THRESH) -> M
     x, y, w, h = cv.boundingRect(pts)
     if w < 2 or h < 2:
         return gray
-    return gray[y:y+h, x:x+w]
+    return gray[y : y + h, x : x + w]
 
 
 def _prepare_roi(clef_key_crop: MatLike) -> MatLike | None:
     gray = _to_gray(clef_key_crop)
     gray = cv.bitwise_not(gray)
     width = gray.shape[1]
-    roi = gray[:, :max(1, int(width * CLEF_ROI_WIDTH_FRAC))]
+    roi = gray[:, : max(1, int(width * CLEF_ROI_WIDTH_FRAC))]
     if roi.shape[0] < 8 or roi.shape[1] < 8:
         return None
     return roi
@@ -97,15 +100,22 @@ def _prepare_roi(clef_key_crop: MatLike) -> MatLike | None:
 
 def _empty_detection() -> ClefDetection:
     return ClefDetection(
-        clef=None, confidence=0.0,
-        letter_score_treble=0.0, letter_score_bass=0.0,
-        slide_score_treble=0.0, slide_score_bass=0.0,
-        treble_match_top_left=(0, 0), treble_match_size=(0, 0),
-        bass_match_top_left=(0, 0), bass_match_size=(0, 0),
+        clef=None,
+        confidence=0.0,
+        letter_score_treble=0.0,
+        letter_score_bass=0.0,
+        slide_score_treble=0.0,
+        slide_score_bass=0.0,
+        treble_match_top_left=(0, 0),
+        treble_match_size=(0, 0),
+        bass_match_top_left=(0, 0),
+        bass_match_size=(0, 0),
     )
 
 
-def _select_clef(treble_score: float, bass_score: float) -> tuple[ClefKind | None, float]:
+def _select_clef(
+    treble_score: float, bass_score: float
+) -> tuple[ClefKind | None, float]:
     if treble_score + CLEF_TIE_MARGIN >= bass_score:
         winner, confidence = "treble", treble_score
     else:
@@ -133,10 +143,10 @@ def _letterbox_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
     canvas = np.full((roi_h, roi_w), 255, dtype=np.uint8)
     y0, x0 = max(0, (roi_h - new_h) // 2), 0
     y1, x1 = min(roi_h, y0 + new_h), min(roi_w, x0 + new_w)
-    canvas[y0:y1, x0:x1] = resized[:y1-y0, :x1-x0]
+    canvas[y0:y1, x0:x1] = resized[: y1 - y0, : x1 - x0]
 
     result = cv.matchTemplate(roi, canvas, cv.TM_CCOEFF_NORMED)
-    return float(result[0, 0]), (x0, y0, x1-x0, y1-y0)
+    return float(result[0, 0]), (x0, y0, x1 - x0, y1 - y0)
 
 
 def _multi_scale_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:

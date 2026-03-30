@@ -117,8 +117,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         left_header_spacings=5.2, first_staff_conservative_spacings=7.0,
     )
     measure_crops = crop_measures(
-        measures_map=measures_map, image=raw_bgr,
-        staffs=staffs, notes_image=notes_mask,
+        measures_map=measures_map, staffs=staffs, notes_image=notes_mask,
     )
     save_measure_visualization(
         sheet_image=raw_bgr, measures_map=measures_map,
@@ -594,7 +593,6 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
                 staff=staff,
                 measure=measure,
                 measure_index=measure_index,
-                return_intermediates=True,
             )
             intermediates_by_measure[(staff_index, measure_index)] = intermediates
 

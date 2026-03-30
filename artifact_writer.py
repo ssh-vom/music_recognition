@@ -20,10 +20,13 @@ class ArtifactWriter:
     def __init__(self, image_path: str, root_dir: str = "artifacts"):
         self.sections = _Sections()
         image_stem = Path(image_path).stem
-        timestamp = datetime.now().strftime("%Y%m%d")
-        self.root = Path(root_dir) / f"{image_stem}_{timestamp}"
+        self.root = Path(root_dir) / f"{image_stem}"
 
-        for name in [v for k, v in vars(_Sections).items() if not k.startswith("_") and isinstance(v, str)]:
+        for name in [
+            v
+            for k, v in vars(_Sections).items()
+            if not k.startswith("_") and isinstance(v, str)
+        ]:
             (self.root / name).mkdir(parents=True, exist_ok=True)
 
     def section_dir(self, section: str) -> Path:

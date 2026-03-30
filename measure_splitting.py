@@ -1,10 +1,8 @@
 """Split staves into individual measures using bar line positions."""
 
-import cv2 as cv
 from cv2.typing import MatLike
 
 from schema import Clef, KeySignature, Measure, TimeSignature
-from staff_detection import erase_staff_for_notes
 
 LEFT_HEADER_SPACINGS = 7.0
 BAR_TRIM_RATIO = 0.25
@@ -16,7 +14,7 @@ def split_measures(
     staffs: list,
     *,
     left_header_spacings: float = LEFT_HEADER_SPACINGS,
-    first_staff_conservative_spacings: float | None = None,
+    first_staff_conservative_spacings: float = 7.0,
 ) -> dict[int, list[Measure]]:
     barlines_by_staff = _group_barlines_by_staff(bars, len(staffs))
     measures_map = {}
@@ -29,7 +27,7 @@ def split_measures(
             left_header_spacings=left_header_spacings,
         )
 
-    if first_staff_conservative_spacings is not None and 0 in measures_map:
+    if 0 in measures_map:
         _apply_first_staff_start_policy(measures_map, staffs, first_staff_conservative_spacings)
 
     return measures_map
@@ -132,25 +130,16 @@ def _apply_first_staff_start_policy(
 
 def crop_measures(
     measures_map: dict[int, list[Measure]],
-    image: MatLike,
     staffs: list,
-    notes_image: MatLike | None = None,
+    notes_image: MatLike,
 ) -> dict[int, list[MatLike]]:
     crops = {}
 
     for staff_index, measures in measures_map.items():
         staff_crops = []
         for measure in measures:
-            src = notes_image if notes_image is not None else image
-            crop = src[measure.y_top : measure.y_bottom + 1, measure.x_start : measure.x_end]
-
-            if notes_image is not None:
-                cleaned = crop
-            else:
-                gray = crop if len(crop.shape) == 2 else cv.cvtColor(crop, cv.COLOR_BGR2GRAY)
-                cleaned = erase_staff_for_notes(gray, staffs=staffs)
-
-            staff_crops.append(cleaned)
+            crop = notes_image[measure.y_top : measure.y_bottom + 1, measure.x_start : measure.x_end]
+            staff_crops.append(crop)
         crops[staff_index] = staff_crops
 
     return crops

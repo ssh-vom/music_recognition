@@ -83,16 +83,14 @@ def detect_key_signature_accidentals(
     clef_key_crop: MatLike,
     staff,
     staff_index: int,
-    x_start: int = 0,
-    x_end: int | None = None,
+    x_start: int,
+    x_end: int,
 ) -> list[Accidental]:
     """Detect sharps and flats in the key signature."""
     if clef_key_crop.size == 0:
         return []
 
     width = clef_key_crop.shape[1]
-    if x_end is None:
-        x_end = width
     x_start = max(0, min(width, x_start))
     x_end = max(x_start, min(width, x_end))
     key_roi_mask = clef_key_crop[:, x_start:x_end]

@@ -49,9 +49,6 @@ def build_abc_text(score, *, title, reference_number, meter, unit_note_length, k
 
 
 def notes_to_abc_body(score, *, meter, key, melody_only=False):
-    if hasattr(score, "staff_nodes"):
-        return _notes_to_abc_body_legacy(score, meter, key, melody_only=melody_only)
-
     staff_lines = []
     default_rest = _default_measure_rest(meter)
     beats_per_measure = _meter_numerator(meter)
@@ -89,49 +86,6 @@ def notes_to_abc_body(score, *, meter, key, melody_only=False):
         staff_lines.append(" ".join(segments))
 
     return "\n".join(staff_lines) if staff_lines else f"| {default_rest} |"
-
-
-def _notes_to_abc_body_legacy(score_tree, meter, key, melody_only=False):
-    staff_lines = []
-    default_rest = _default_measure_rest(meter)
-    beats_per_measure = _meter_numerator(meter)
-    key_accidentals = _abc_key_signature_accidentals(key)
-
-    for staff_node in sorted(score_tree.staff_nodes, key=lambda node: node.index):
-        if not staff_node.measures:
-            continue
-        segments = []
-
-        if _has_left_begin_repeat_legacy(staff_node):
-            segments.append("|:")
-        else:
-            segments.append("|")
-
-        for measure_index, measure_node in enumerate(staff_node.measures):
-            tokens = _notes_to_measure_tokens(
-                notes=measure_node.notes,
-                beats_per_measure=beats_per_measure,
-                key_accidentals=key_accidentals,
-                melody_only=melody_only,
-            )
-            segments.append(" ".join(tokens) if tokens else default_rest)
-
-            if measure_index < len(staff_node.measures) - 1:
-                segments.append(_boundary_separator(measure_node.closing_bar))
-            else:
-                staff_end_bar = staff_node.end_bar
-                segments.append(":|" if staff_end_bar is not None and staff_end_bar.repeat == "end" else "|")
-
-        staff_lines.append(" ".join(segments))
-
-    return "\n".join(staff_lines) if staff_lines else f"| {default_rest} |"
-
-
-def _has_left_begin_repeat_legacy(staff_node):
-    if not staff_node.bars or not staff_node.measures:
-        return False
-    first_measure = staff_node.measures[0].measure
-    return any(bar.x <= first_measure.x_start + 8 and bar.repeat == "begin" for bar in staff_node.bars)
 
 
 def _has_left_begin_repeat_flat(staff_bars: list[BarLine], staff_measures: list) -> bool:
