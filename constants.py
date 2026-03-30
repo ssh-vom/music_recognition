@@ -1,8 +1,4 @@
-"""Sheet music detection constants.
-
-All magic numbers are defined here with semantic names to make the code
-self-documenting and easier to tune.
-"""
+"""Sheet music detection constants."""
 
 # =============================================================================
 # GENERAL IMAGE PROCESSING
@@ -72,10 +68,10 @@ NOTEHEAD_CLEANUP_KERNEL = (3, 3)
 
 # Geometric filtering of connected components
 NOTE_MIN_AREA_FRAC = 0.08  # min area relative to spacing²
-NOTE_MAX_AREA_FRAC = 1.8   # max area relative to spacing²
+NOTE_MAX_AREA_FRAC = 1.8  # max area relative to spacing²
 NOTE_MIN_SIZE_FRAC = 0.35  # min width/height relative to spacing
-NOTE_MAX_SIZE_FRAC = 1.9   # max width/height relative to spacing
-NOTE_MIN_ASPECT = 0.45     # width/height ratio
+NOTE_MAX_SIZE_FRAC = 1.9  # max width/height relative to spacing
+NOTE_MIN_ASPECT = 0.45  # width/height ratio
 NOTE_MAX_ASPECT = 2.2
 
 # Tiny notehead refinement threshold
@@ -93,7 +89,7 @@ NOTE_MERGE_DISTANCE_FRAC = 0.75  # relative to spacing
 STEP_ROUND_UP_THRESHOLD = 0.58  # round up if fractional part > 0.58
 
 # Step confidence levels based on distance from exact step position
-STEP_CONFIDENCE_HIGH = 0.20   # within 20% of step boundary = high confidence
+STEP_CONFIDENCE_HIGH = 0.20  # within 20% of step boundary = high confidence
 STEP_CONFIDENCE_MEDIUM = 0.40  # within 40% = medium confidence
 
 # Hollow notehead correction: centroid bias due to empty center
@@ -159,11 +155,11 @@ ACCIDENTAL_MIN_DISTANCE_FRAC = 0.55  # relative to spacing
 
 # Geometric detection fallback (for tiny headers where template matching fails)
 ACCIDENTAL_GEOMETRIC_MIN_HEIGHT_FRAC = 1.8  # min component height
-ACCIDENTAL_GEOMETRIC_MIN_AREA_FRAC = 0.18   # min area relative to spacing²
+ACCIDENTAL_GEOMETRIC_MIN_AREA_FRAC = 0.18  # min area relative to spacing²
 
 # Sharp vs flat classification based on vertical stroke structure
 SHARP_MIN_TALL_CLUSTERS = 2  # need 2+ tall stroke clusters
-FLAT_TALL_CLUSTERS = 1      # flat has 1 tall cluster
+FLAT_TALL_CLUSTERS = 1  # flat has 1 tall cluster
 TALL_COLUMN_THRESHOLD_FRAC = 0.75  # column is "tall" if exceeds this fraction of height
 
 # =============================================================================
@@ -180,8 +176,8 @@ BAR_CLOSE_KERNEL_MIN = 5  # minimum kernel height in pixels
 
 # Contour filtering
 BAR_MIN_HEIGHT_FRAC = 0.4  # relative to staff height
-BAR_MIN_DENSITY = 0.55     # ink ratio within bounding rect
-BAR_MAX_WIDTH_FRAC = 0.6   # single bar line max width
+BAR_MIN_DENSITY = 0.55  # ink ratio within bounding rect
+BAR_MAX_WIDTH_FRAC = 0.6  # single bar line max width
 BAR_DOUBLE_MIN_WIDTH_FRAC = 1.0  # double bar line min width
 
 # Edge margins for detecting repeat signs
@@ -191,7 +187,7 @@ BAR_LEFT_RELAXED_EXTRA_FRAC = 0.7  # extra width allowed at left edge
 
 # Merging nearby bar lines
 BAR_MERGE_DISTANCE_FRAC = 0.5  # relative to spacing
-BAR_PAIR_GAP_FRAC = 1.5        # max gap between double bar lines
+BAR_PAIR_GAP_FRAC = 1.5  # max gap between double bar lines
 
 # =============================================================================
 # MEASURE SPLITTING
@@ -215,9 +211,9 @@ MIN_MEASURE_WIDTH = 4  # pixels
 EVENT_X_TOLERANCE = 5  # pixels
 
 # Compact run detection: tightly spaced notes likely beamed
-COMPACT_GAP_MIN_FRAC = 1.2   # min spacing between beamed notes
-COMPACT_GAP_MAX_FRAC = 3.6   # max spacing between beamed notes
-COMPACT_RUN_MIN_LENGTH = 4   # minimum notes in a compact run
+COMPACT_GAP_MIN_FRAC = 1.2  # min spacing between beamed notes
+COMPACT_GAP_MAX_FRAC = 3.6  # max spacing between beamed notes
+COMPACT_RUN_MIN_LENGTH = 4  # minimum notes in a compact run
 
 # Beam detection
 BEAM_X_SPAN_MIN_FRAC = 0.5  # need some horizontal spread
