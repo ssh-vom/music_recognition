@@ -17,7 +17,7 @@ def write_abc_file(
     meter="4/4",
     unit_note_length="1/4",
     key="C",
-    tempo_qpm=120,
+    tempo_qpm: int | None = None,
 ):
     abc_text = build_abc_text(
         score=score_tree,
@@ -41,9 +41,10 @@ def build_abc_text(
         f"T:{title}",
         f"M:{meter}",
         f"L:{unit_note_length}",
-        f"Q:1/4={tempo_qpm}",
         f"K:{key}",
     ]
+    if tempo_qpm is not None:
+        header_lines.insert(4, f"Q:1/4={tempo_qpm}")
     body = notes_to_abc_body(score=score, meter=meter, key=key)
     return "\n".join(header_lines) + "\n" + body + "\n"
 

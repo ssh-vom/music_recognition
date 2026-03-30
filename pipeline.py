@@ -13,11 +13,7 @@ from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
 from clef_detection import detect_clef
 from detection_logs import abc_key_from_score, detection_logs_text, meter_from_score
-from constants import (
-    DEFAULT_TEMPO_QPM,
-    DEFAULT_TITLE,
-    DEFAULT_UNIT_NOTE_LENGTH,
-)
+from constants import DEFAULT_TITLE, DEFAULT_UNIT_NOTE_LENGTH
 from image_utils import to_gray
 from measure_splitting import (
     crop_clef_regions,
@@ -202,7 +198,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         meter=meter,
         unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
         key=key,
-        tempo_qpm=DEFAULT_TEMPO_QPM,
+        tempo_qpm=None,
     )
 
     print(
