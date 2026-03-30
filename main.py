@@ -39,27 +39,5 @@ def main():
     print("=" * 60)
 
 
-def play_music():
-    """Reads a local text file containing ABC notation for a C major scale, parses it using music21, and plays the resulting MIDI output.
-    Assumes all abc notation is formatted correctly"""
-    # Define the URL and the local path for saving the file
-    local_file_path = 'data/c_major_scale.txt'
-
-    # Ensure the 'data' directory exists
-    os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-    
-    # Read and print the content from the local file
-    with open(local_file_path, 'r') as file:
-        tunes = file.read()
-    
-    tune_list = []
-    tune_list = tunes.split('\n\n\n')
-
-    for i in range(len(tune_list)):
-        # tune_list[i] = preprocess_tunes(tune_list[i])
-        score = converter.parse(tune_list[i])
-        score.show('midi')
-
-
 if __name__ == "__main__":
     main()
