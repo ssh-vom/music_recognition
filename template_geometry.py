@@ -4,12 +4,6 @@ import cv2 as cv
 from cv2.typing import MatLike
 
 
-def to_gray(image: MatLike) -> MatLike:
-    if len(image.shape) == 2:
-        return image
-    return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-
-
 def resize_to_height(template: MatLike, target_h: int) -> MatLike:
     th, tw = template.shape[:2]
     if th < 1 or target_h < 1:

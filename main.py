@@ -23,19 +23,30 @@ def main():
     print(f"Found {len(image_paths)} sheet music image(s) to process")
     print("=" * 60)
 
+    processed_count = 0
+    failed_count = 0
+
     # Process each image
     for image_path in image_paths:
         try:
             run_pipeline(str(image_path), show_windows=False)
+            processed_count += 1
         except Exception as e:
-            print(f"ERROR processing {image_path}: {e}")
+            failed_count += 1
+            print(f"Error processing {image_path}: {e}")
             import traceback
 
             traceback.print_exc()
             continue
 
     print("\n" + "=" * 60)
-    print("All images processed successfully!")
+    if failed_count == 0:
+        print(f"Processed {processed_count}/{len(image_paths)} images successfully.")
+    else:
+        print(
+            f"Processed {processed_count}/{len(image_paths)} images; "
+            f"{failed_count} failed."
+        )
     print("=" * 60)
 
 

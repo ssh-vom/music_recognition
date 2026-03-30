@@ -18,6 +18,7 @@ from constants import (
     DEFAULT_TITLE,
     DEFAULT_UNIT_NOTE_LENGTH,
 )
+from image_utils import to_gray
 from measure_splitting import (
     crop_clef_regions,
     crop_measures,
@@ -42,7 +43,6 @@ from staff_detection import (
     erase_staff_for_bars,
     erase_staff_for_notes,
     find_staves,
-    to_gray,
 )
 from visualization import (
     choose_clef_overlay_rect,
@@ -78,7 +78,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     )
     print(f"  {len(staffs)} staff(s)")
 
-    notes_mask = erase_staff_for_notes(to_gray(raw_bgr), staffs)
+    notes_mask = erase_staff_for_notes(gray, staffs)
     bars_mask = erase_staff_for_bars(binary, staffs)
     artifacts.write_image(
         artifacts.sections.masks, "02_notes_mask_erased.jpg", cv.bitwise_not(notes_mask)

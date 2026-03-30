@@ -22,6 +22,7 @@ from constants import (
     STAFF_SPACING_TOLERANCE_MIN,
     STAFF_VERTICAL_PADDING_FRAC,
 )
+from image_utils import to_gray
 from schema import Staff, StaffLine
 
 
@@ -32,12 +33,6 @@ def find_staves(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
     centers = find_line_centers(line_mask)
     staffs = group_into_staves(centers, line_mask, binary.shape)
     return staffs, binary, line_mask
-
-
-def to_gray(image: MatLike) -> MatLike:
-    if len(image.shape) == 2:
-        return image.copy()
-    return cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
 
 def binarize(gray: MatLike) -> MatLike:

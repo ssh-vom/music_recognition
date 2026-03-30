@@ -1,7 +1,4 @@
-"""Clef detection - classify treble vs bass clef using template matching.
-Based largely on the content below, but optimized for treble and bass clef
-https://docs.opencv.org/3.4/d4/dc6/tutorial_py_template_matching.html
-"""
+"""Clef detection - classify treble vs bass via template matching."""
 
 from pathlib import Path
 
@@ -16,9 +13,10 @@ from constants import (
     CLEF_TIE_MARGIN,
     CLEF_TRIM_WHITE_THRESH,
 )
+from image_utils import to_gray
 from schema import ClefDetection, ClefKind
 from symbol_templates import CLEF_BASS, CLEF_TREBLE
-from template_geometry import fit_to_roi, resize_to_height, to_gray
+from template_geometry import fit_to_roi, resize_to_height
 
 _treble_template = None
 _bass_template = None

@@ -110,11 +110,7 @@ def _find_end_bar(staff_bars: list[BarLine], staff_measures: list) -> BarLine | 
 
 
 def _default_measure_rest(meter):
-    numerator = 4
-    if "/" in meter:
-        left = meter.split("/", maxsplit=1)[0].strip()
-        if left.isdigit():
-            numerator = max(1, int(left))
+    numerator = _meter_numerator(meter)
     return "z" if numerator == 1 else f"z{numerator}"
 
 

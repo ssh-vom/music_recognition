@@ -4,7 +4,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent / "templates"
 CLEF_DIR = ROOT / "clef"
-METER_DIR = ROOT / "meter"
 ACCIDENTALS_DIR = ROOT / "accidentals"
 
 CLEF_TREBLE = CLEF_DIR / "treble.png"

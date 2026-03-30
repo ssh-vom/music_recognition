@@ -112,9 +112,7 @@ def _split_staff(
                 and usable_bars[index + 1].kind == "double_right"
             ):
                 continue
-        elif bar.kind == "double_right":
-            pass
-        elif bar.kind != "single":
+        elif bar.kind not in {"single", "double_right"}:
             raise ValueError(f"Unknown bar kind: {bar.kind}")
 
         measure = _build_measure(current_start, bar.x - trim, staff, staff_index)
