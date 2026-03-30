@@ -82,10 +82,10 @@ def find_notes(
     centers = _merge_nearby_centers(centers, merge_distance)
 
     intermediates["centers_after_merge"] = centers.copy()
-
     centers = _add_stem_centers(
         mask, centers, staff.spacing, merge_distance, intermediates
     )
+    intermediates["centers_after_stems"] = [tuple(c) for c in centers]
 
     notes = _resolve_notes(centers, mask, staff, measure, measure_index)
     notes = _merge_duplicate_detections(notes, staff.spacing, mask)
@@ -151,7 +151,11 @@ def _filter_notehead_candidates(
                 shape[0] - 1,
             )
             if refined:
-                cx, cy = refined
+                rx, ry = refined
+                # Guardrail: reject tiny-center refinement that jumps too far vertically.
+                max_refine_shift_y = max(2, int(round(spacing * 0.5)))
+                if abs(ry - cy) <= max_refine_shift_y:
+                    cx, cy = rx, ry
 
         if valid_area and valid_size and valid_aspect:
             centers.append((cx, cy))
@@ -257,6 +261,7 @@ def _add_stem_centers(
     min_stem_area = spacing * spacing * 0.35
     overlap_x = int(round(merge_dist * 1.2))
     overlap_y = int(round(spacing * 1.2))
+    max_band_y_delta = max(4, int(round(spacing * 1.8)))
     added = 0
 
     for i in range(1, count):
@@ -273,6 +278,17 @@ def _add_stem_centers(
 
         cx = x + w // 2
         cy = y + h - max(1, int(round(spacing * 0.55)))
+
+        existing_ys = [ey for _, ey, _ in result]
+        if existing_ys:
+            mean_y = int(round(sum(existing_ys) / float(len(existing_ys))))
+            if abs(cy - mean_y) > max_band_y_delta:
+                continue
+
+        # Guardrail: never add synthetic centers that share nearly the same x
+        # as an existing center; this pattern caused vertical ghost duplicates.
+        if any(abs(cx - ex) <= overlap_x for ex, _, _ in result):
+            continue
 
         if any(
             abs(cx - ex) <= overlap_x and abs(cy - ey) <= overlap_y
@@ -310,7 +326,10 @@ def _resolve_notes(
 
         cy_pitch = cy
         if duration in ("half", "whole"):
-            cy_pitch = cy + int(round(staff.spacing * HOLLOW_NOTE_Y_OFFSET_FRAC))
+            # Hollow note centroids can skew upward, but applying the offset to
+            # already-low notes tends to push them one step too low.
+            if cy <= bottom_line_y:
+                cy_pitch = cy + int(round(staff.spacing * HOLLOW_NOTE_Y_OFFSET_FRAC))
 
         step_float = (bottom_line_y - cy_pitch) / half_step_px
         step = _quantize_to_step(step_float)

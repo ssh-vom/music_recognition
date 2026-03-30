@@ -40,7 +40,6 @@ def refine_beamed_durations(
                         "eighth" if beam_count == 1 else "sixteenth"
                     )
 
-    _apply_compact_spacing_fallback(notes, staff.spacing)
     return notes
 
 
