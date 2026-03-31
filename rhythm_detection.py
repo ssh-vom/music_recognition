@@ -4,8 +4,7 @@ import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
-from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
-from schema import DurationClass, Note, Staff
+from schema import Note, Staff
 
 COMPACT_GAP_MIN_FRAC = 1.2
 COMPACT_GAP_MAX_FRAC = 3.6
@@ -19,7 +18,7 @@ def refine_beamed_durations(
     if len(notes) < 2:
         return notes
 
-    num_labels, labels, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
+    _, labels, _, _ = cv.connectedComponentsWithStats(mask, connectivity=8)
 
     note_components: dict[int, list[tuple[int, Note]]] = {}
     for i, note in enumerate(notes):
@@ -41,66 +40,6 @@ def refine_beamed_durations(
                     )
 
     return notes
-
-
-def _apply_compact_spacing_fallback(notes: list[Note], spacing: float) -> None:
-    """Upgrade compact runs of quarter-like events to eighths.
-
-    Conservative fallback for when beam ink is broken after preprocessing.
-    Targets long, evenly spaced melodic runs common in fast fiddle tunes.
-    """
-    if len(notes) < COMPACT_RUN_MIN_EVENTS:
-        return
-
-    events = group_notes_into_events(notes, x_tol=EVENT_X_TOLERANCE_PX)
-    if len(events) < COMPACT_RUN_MIN_EVENTS:
-        return
-
-    anchors = [
-        int(round(sum(note.center_x for note in event) / float(len(event))))
-        for event in events
-    ]
-    compact_min = spacing * COMPACT_GAP_MIN_FRAC
-    compact_max = spacing * COMPACT_GAP_MAX_FRAC
-
-    start = 0
-    while start < len(events) - 1:
-        gap = anchors[start + 1] - anchors[start]
-        if gap < compact_min or gap > compact_max:
-            start += 1
-            continue
-
-        end = start + 1
-        while end < len(events) - 1:
-            next_gap = anchors[end + 1] - anchors[end]
-            if compact_min <= next_gap <= compact_max:
-                end += 1
-            else:
-                break
-
-        run_events = events[start : end + 1]
-        if len(run_events) >= COMPACT_RUN_MIN_EVENTS and _run_can_be_eighths(
-            run_events, spacing
-        ):
-            for event in run_events:
-                for note in event:
-                    if note.duration_class in ("quarter", None):
-                        note.duration_class = "eighth"
-
-        start = end + 1
-
-
-def _run_can_be_eighths(run_events: list[list[Note]], spacing: float) -> bool:
-    if len(run_events) < COMPACT_RUN_MIN_EVENTS:
-        return False
-    for event in run_events:
-        for note in event:
-            if note.duration_class in ("whole", "half"):
-                return False
-    if any(len(event) > 2 for event in run_events):
-        return False
-    steps = [event[-1].step for event in run_events if event]
-    return len(set(steps)) >= 2
 
 
 def _detect_beam_count(
