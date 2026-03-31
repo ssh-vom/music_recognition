@@ -49,16 +49,16 @@
 // Abstract - not to exceed 1/2 page
 #par[
   This project presents an image processing pipeline for Optical Music Recognition (OMR) that converts scanned sheet music in 
-  PNG format into playable ABC notation format. The central challenge in OMR without classifiers or deep learning is that many symbols
-  share visual geometry. Noteheads resemble staff line fragments when filled, beams resemble noteheads when isolated, and stems intersect 
+  PNG format into playable music in ABC format. The central challenge faced in OMR is that many symbols
+  share visual geometry. Filled Noteheads resemble staff line fragments, beams resemble note stems, and the note stems themselves intersect 
   with practically every other structure on a score. Our approach utilizes the distinct morphological properties of each type of symbol; 
   staff lines are the widest horiontal structures, bar lines are the tallest vertical structures and noteheads share an eliptical shape that 
   is proportional to the spacing between staff lines. With these properties in mind, we utilize morphological kernels and connected component analysis 
-  to distinguish between each symbol indepdently.\ This pipeline was evaluated on five melodies from `abcnotation.com`, of varying complexities. _Twinkle Twinkle Little Star_ was reproduced 
+  to distinguish between each symbol indepdently.\ This pipeline was evaluated on five melodies from `abcnotation.com`, of varying complexity. _Twinkle Twinkle Little Star_ was reproduced 
   exactly. _Mary Had a Little Lamb_ correctly worked with a one-flat key signature, and Frere Jacques correctly tracked stepwise 
-  melodies with eighth notes. The Sailors' Hornpipe, a complex piece in G major, preserved pitch contours with minor errors, while _The Boys of 45 Reel_, showcased
-  signifcant false detections of noteheads based on misclassified ink fragments. These results confirm that morphology-based OMR is effective for standard sheets with sparse notation, 
-  with beam classification remaining an important limitation.
+  melodies with eighth notes. The Sailors' Hornpipe, a more complex piece, preserved proper contours in pitch, while _The Boys of 45 Reel_, showcased
+  signifcant false detections of noteheads based on misclassified note fragments. These results confirm that morphology-based OMR is effective for standard music sheets with simple sparse layouts, 
+  however, classifying rhythm and beams remains a difficult limitation to overcome.
 ]
 
 #pagebreak()
