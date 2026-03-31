@@ -152,7 +152,7 @@ def _filter_notehead_candidates(
             )
             if refined:
                 rx, ry = refined
-                # Guardrail: reject tiny-center refinement that jumps too far vertically.
+                # Reject tiny-center refinement that jumps too far vertically.
                 max_refine_shift_y = max(2, int(round(spacing * 0.5)))
                 if abs(ry - cy) <= max_refine_shift_y:
                     cx, cy = rx, ry
@@ -285,7 +285,7 @@ def _add_stem_centers(
             if abs(cy - mean_y) > max_band_y_delta:
                 continue
 
-        # Guardrail: never add synthetic centers that share nearly the same x
+        # Don't add centers that share the same x
         # as an existing center; this pattern caused vertical ghost duplicates.
         if any(abs(cx - ex) <= overlap_x for ex, _, _ in result):
             continue
