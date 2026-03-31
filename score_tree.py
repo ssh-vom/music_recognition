@@ -35,8 +35,7 @@ def build_score(
 ) -> Score:
     bars_by_staff: dict[int, list[BarLine]] = {i: [] for i in range(len(staffs))}
     for bar in bars:
-        if 0 <= bar.staff_index < len(staffs):
-            bars_by_staff[bar.staff_index].append(bar)
+        bars_by_staff[bar.staff_index].append(bar)
     for staff_bars in bars_by_staff.values():
         staff_bars.sort(key=lambda bar: bar.x)
 

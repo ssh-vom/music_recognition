@@ -123,9 +123,6 @@ def _letterbox_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
     roi_h, roi_w = roi.shape[:2]
     th, tw = template.shape[:2]
 
-    if th < 1 or tw < 1:
-        return 0.0, (0, 0, 0, 0)
-
     scale = max(min((roi_w - 1) / tw, (roi_h - 1) / th) * 0.99, 1e-6)
     new_w = max(1, int(round(tw * scale)))
     new_h = max(1, int(round(th * scale)))

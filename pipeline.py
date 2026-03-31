@@ -222,13 +222,8 @@ def _detect_first_staff_header_accidentals(
     staffs: list[Staff],
     bars: list[BarLine],
 ) -> list[Accidental]:
-    if not staffs:
-        return []
-
     crop = clef_key_crops.get(0)
     clef = clefs_by_staff.get(0)
-    if crop is None or clef is None:
-        return []
 
     try:
         min_x = _header_search_left_x(crop=crop, staff_spacing=staffs[0].spacing)
@@ -310,9 +305,6 @@ def _save_first_staff_accidental_visualization(
 
 
 def _header_search_left_x(crop: MatLike, staff_spacing: float) -> int:
-    if crop.size == 0:
-        return 0
-
     count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
     min_area = max(8, int(round(staff_spacing * staff_spacing * 0.20)))
     best_right = 0
@@ -335,9 +327,6 @@ def _header_search_left_x(crop: MatLike, staff_spacing: float) -> int:
 def _header_search_right_x(
     crop: MatLike, default_max_x: int, staff_spacing: float
 ) -> int:
-    if crop.size == 0:
-        return default_max_x
-
     count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
     min_area = max(8, int(round(staff_spacing * staff_spacing * 0.20)))
     components = []

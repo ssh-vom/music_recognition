@@ -83,9 +83,6 @@ def detect_key_signature_accidentals(
     x_end: int,
 ) -> list[Accidental]:
     """Detect sharps and flats in the key signature."""
-    if clef_key_crop.size == 0:
-        return []
-
     width = clef_key_crop.shape[1]
     x_start = max(0, min(width, x_start))
     x_end = max(x_start, min(width, x_end))

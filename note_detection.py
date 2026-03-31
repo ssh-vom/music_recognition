@@ -124,7 +124,7 @@ def _filter_notehead_candidates(
     tiny_area = spacing * spacing * NOTE_TINY_AREA_FRAC
 
     centers = []
-    filtered_log = [] if intermediates is not None else None
+    filtered_log = []
 
     for i in range(1, count):
         w = int(stats[i, cv.CC_STAT_WIDTH])
@@ -160,8 +160,7 @@ def _filter_notehead_candidates(
         if valid_area and valid_size and valid_aspect:
             centers.append((cx, cy))
 
-        if filtered_log is not None:
-            filtered_log.append(
+        filtered_log.append(
                 {
                     "id": i,
                     "x": cx,
@@ -174,9 +173,8 @@ def _filter_notehead_candidates(
                 }
             )
 
-    if intermediates is not None:
-        intermediates["filtered_components"] = filtered_log
-        intermediates["raw_centers"] = centers.copy()
+    intermediates["filtered_components"] = filtered_log
+    intermediates["raw_centers"] = centers.copy()
 
     return centers
 

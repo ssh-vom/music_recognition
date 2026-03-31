@@ -45,9 +45,6 @@ def refine_beamed_durations(
 def _detect_beam_count(
     mask: MatLike, note_group: list[tuple[int, Note]], staff: Staff
 ) -> int:
-    if len(note_group) < 2:
-        return 0
-
     notes = [n for _, n in note_group]
     spacing = staff.spacing
 

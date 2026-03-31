@@ -27,9 +27,6 @@ def format_clef_log(score: Score) -> str:
 
 def format_accidental_log(score: Score) -> str:
     clef = score.clefs.get(0)
-    if clef is None:
-        return "staff 0 header accidentals: sharps=0 flats=0 total=0\n"
-
     glyphs = clef.key_header_glyphs
     sharps = sum(1 for g in glyphs if g.kind == "sharp")
     flats = sum(1 for g in glyphs if g.kind == "flat")
@@ -45,8 +42,6 @@ def format_accidental_log(score: Score) -> str:
 
 def format_time_signature_log(score: Score) -> str:
     clef = score.clefs.get(0)
-    if clef is None:
-        return "staff 0 time signature: ?\n"
     ts = clef.time_signature
     if ts.numerator is None or ts.denominator is None:
         return "staff 0 time signature: ?\n"
@@ -54,15 +49,11 @@ def format_time_signature_log(score: Score) -> str:
 
 
 def format_key_signature_log(score: Score) -> str:
-    if score.clefs.get(0) is None:
-        return "staff 0 key signature: C\n"
     return f"staff 0 key signature: {abc_key_from_score(score)}\n"
 
 
 def meter_from_score(score: Score) -> str:
     clef = score.clefs.get(0)
-    if clef is None:
-        return DEFAULT_METER
     ts = clef.time_signature
     if ts.numerator is None or ts.denominator is None:
         return DEFAULT_METER
@@ -71,7 +62,7 @@ def meter_from_score(score: Score) -> str:
 
 def abc_key_from_score(score: Score) -> str:
     clef = score.clefs.get(0)
-    if clef is None or clef.key_signature.fifths is None:
+    if clef.key_signature.fifths is None:
         return DEFAULT_KEY
     return abc_key_from_fifths(clef.key_signature.fifths)
 
