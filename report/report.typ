@@ -70,13 +70,6 @@ score tree data structure linking staffs, measures and notes hierarchically. (in
 which allows for the system to function independently across different scans with varying DPI and printing size. Figure 1 and Figure 2 in the Results section summarize the kernel design decisions throughout.
 
 
-// #figure(
-//   image("assets/simple_score_tree.png", width: 80%),
-//   caption: [Score Tree simplified],
-// ) <fig-simple_score_tree>
-
-
-
 == Methods and Techniques
 
 The pipeline consists of 8 key steps:
@@ -129,104 +122,31 @@ Where $y_"bottom"$ is the y-coordinate of the lowestr staff line, $y_"note"$ is 
 
 #pagebreak()
 
-// ============================================
-// PAGE 3-4: DISCUSSION OF RESULTS
-// ============================================
 = Discussion of Results
-
-This section should be one to two pages maximum. Discuss the major findings in 
-terms of the project objectives and make clear reference to any images generated.
 
 == Major Findings
 
-Summarize the key results of your project. Explain what worked well and what 
-challenges were encountered. Discuss how the results relate to your original 
-objectives.
-
 == Analysis
-
-Provide interpretation of your results. Compare with expected outcomes or 
-reference values if applicable. Discuss the significance of your findings.
 
 == Figure References
 
-Refer to your generated images by number. For example:
-// - @fig:result1 shows the initial condition of the system.
-// - @fig:result2 demonstrates the final state after processing.
-
-// Continue discussion as needed...
-
 #pagebreak()
 
-// ============================================
-// RESULTS: FIGURES SECTION
-// ============================================
 = Results
 
-This section includes all images generated in the project. Number images 
-individually so they can be referenced in the preceding discussions.
-
-// // Example figure - replace with your actual images
-// #figure(
-//   image("", width: 80%),
-//   caption: [
-//     Description of the first result image. Explain what is being shown and 
-//     what it demonstrates about the project.
-//   ],
-// ) <fig:result1>
 
 #v(1em)
 
-// #figure(
-//   image("placeholder.png", width: 80%),
-//   caption: [
-//     Description of the second result image. Include relevant details about 
-//     parameters, conditions, or noteworthy features.
-//   ],
-// ) <fig:result2>
-//
-// Add more figures as needed...
 
 #pagebreak()
 
-// ============================================
-// APPENDIX: CODE LISTINGS
-// ============================================
 = Appendix
 
-This section includes listings of all programs developed for the project. 
-Standard routines and other material obtained from other sources should be 
-achnowledged by name, but their listings should not be included.
-
 == Acknowledgments
-
-The following external resources were used in this project:
-- Library/Package 1: Brief description and source
-- Library/Package 2: Brief description and source
-- Any standard routines or algorithms referenced from literature
 
 == Program Listings
 
 === Main Program (main.py / main.m / etc.)
 
-```python
-# Replace with your actual code
-# Example placeholder:
-def main():
-    print("Hello, World!")
-    # Your implementation here
-
-if __name__ == "__main__":
-    main()
-```
-
 === Supporting Functions (utils.py / helpers.m / etc.)
 
-```python
-# Replace with your actual helper functions
-def helper_function(x):
-    """Description of what this function does."""
-    return x * 2
-```
-
-// Add more code listings as needed...
