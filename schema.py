@@ -1,7 +1,7 @@
 """
-Flattened Tree Structure of the notes
-described further in score_tree.py
-These support the detections we need for each of the different components
+Flattened score schema and small score-construction helpers.
+
+These support the detections we need for each of the different components:
 
 Staffs,
 Clefs,
@@ -150,3 +150,70 @@ class Score:
 
     def get_bars_for_staff(self, staff_index: int) -> list[BarLine]:
         return [b for b in self.bars if b.staff_index == staff_index]
+
+
+def build_score(
+    *,
+    image_path: str,
+    sheet_image: MatLike,
+    staffs: list[Staff],
+    bars: list[BarLine],
+    clefs_by_staff: dict[int, Clef],
+    clef_detections: dict[int, ClefDetection],
+    measures_map: dict[int, list[Measure]],
+    measure_crops: dict[int, list[MatLike]],
+) -> Score:
+    bars_by_staff: dict[int, list[BarLine]] = {i: [] for i in range(len(staffs))}
+    for bar in bars:
+        bars_by_staff[bar.staff_index].append(bar)
+    for staff_bars in bars_by_staff.values():
+        staff_bars.sort(key=lambda bar: bar.x)
+
+    all_measures: list[Measure] = []
+
+    for staff_index, _ in enumerate(staffs):
+        staff_measures = measures_map.get(staff_index, [])
+        staff_crops = measure_crops.get(staff_index, [])
+        staff_bars = bars_by_staff.get(staff_index, [])
+
+        for measure_index, measure in enumerate(staff_measures):
+            if measure_index < len(staff_crops):
+                measure.crop = staff_crops[measure_index]
+            all_measures.append(measure)
+
+        closing_bars = _closing_bars_for_measures(staff_bars, staff_measures)
+        staff_measure_list = [m for m in all_measures if m.staff_index == staff_index]
+        for measure_index, measure in enumerate(staff_measure_list):
+            if measure_index < len(closing_bars):
+                measure.closing_bar = closing_bars[measure_index]
+
+    return Score(
+        image_path=image_path,
+        sheet_image=sheet_image,
+        staffs=staffs,
+        measures=all_measures,
+        bars=bars,
+        notes=[],
+        clefs=clefs_by_staff,
+        clef_detections=clef_detections,
+    )
+
+
+def _closing_bars_for_measures(
+    staff_bars: list[BarLine], staff_measures: list[Measure]
+) -> list[BarLine]:
+    if not staff_bars or not staff_measures:
+        return []
+
+    first_start = staff_measures[0].x_start
+    last_end = staff_measures[-1].x_end
+    usable = [bar for bar in staff_bars if first_start < bar.x < (last_end + 12)]
+
+    closers: list[BarLine] = []
+    for index, bar in enumerate(usable):
+        if bar.kind == "double_left":
+            if index + 1 < len(usable) and usable[index + 1].kind == "double_right":
+                continue
+        closers.append(bar)
+
+    return closers[: max(0, len(staff_measures) - 1)]

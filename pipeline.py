@@ -33,8 +33,8 @@ from schema import (
     Score,
     Staff,
     TimeSignature,
+    build_score,
 )
-from score_tree import build_score
 from staff_detection import (
     erase_staff_for_bars,
     erase_staff_for_notes,
