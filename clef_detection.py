@@ -13,10 +13,8 @@ from constants import (
     CLEF_TIE_MARGIN,
     CLEF_TRIM_WHITE_THRESH,
 )
-from image_utils import to_gray
 from schema import ClefDetection, ClefKind
-from symbol_templates import CLEF_BASS, CLEF_TREBLE
-from template_geometry import fit_to_roi, resize_to_height
+from utils import CLEF_BASS, CLEF_TREBLE, fit_to_roi, resize_to_height, to_gray
 
 _treble_template = None
 _bass_template = None

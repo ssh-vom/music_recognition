@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from note_grouping import EVENT_X_TOLERANCE_PX, group_notes_into_events
 from schema import BarLine
+from utils import EVENT_X_TOLERANCE_PX, group_notes_into_events
 
 BEAM_BREAK_EPSILON = 1e-6
 

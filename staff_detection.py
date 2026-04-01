@@ -21,8 +21,8 @@ from constants import (
     STAFF_SPACING_TOLERANCE_MIN,
     STAFF_VERTICAL_PADDING_FRAC,
 )
-from image_utils import to_gray
 from schema import Staff, StaffLine
+from utils import to_gray
 
 
 def find_staffs(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:

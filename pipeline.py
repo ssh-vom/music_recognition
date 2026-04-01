@@ -14,7 +14,7 @@ from bar_detection import find_bars
 from clef_detection import detect_clef
 from detection_logs import abc_key_from_score, detection_logs_text, meter_from_score
 from constants import DEFAULT_TITLE, DEFAULT_UNIT_NOTE_LENGTH
-from image_utils import to_gray
+from utils import to_gray
 from measure_splitting import (
     crop_clef_regions,
     crop_measures,

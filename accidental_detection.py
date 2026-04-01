@@ -6,10 +6,14 @@ import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
-from image_utils import to_gray
 from schema import Accidental
-from symbol_templates import ACCIDENTAL_FLAT, ACCIDENTAL_SHARP
-from template_geometry import fit_to_roi, resize_to_height
+from utils import (
+    ACCIDENTAL_FLAT,
+    ACCIDENTAL_SHARP,
+    fit_to_roi,
+    resize_to_height,
+    to_gray,
+)
 
 _SHARP_TEMPLATE = None
 _FLAT_TEMPLATE = None
