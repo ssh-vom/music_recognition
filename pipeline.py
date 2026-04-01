@@ -72,11 +72,8 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     )
     print(f"  {len(staffs)} staff(s)")
 
-    notes_mask = erase_staff_for_notes(gray, staffs)
+    notes_mask_raw, notes_mask = erase_staff_for_notes(gray, staffs)
     bars_mask = erase_staff_for_bars(binary, staffs)
-    artifacts.write_image(
-        artifacts.sections.masks, "02_notes_mask_erased.jpg", cv.bitwise_not(notes_mask)
-    )
     artifacts.write_image(
         artifacts.sections.masks, "03_bars_mask_erased.jpg", cv.bitwise_not(bars_mask)
     )
@@ -166,6 +163,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     print("Creating visualizations...")
     save_full_clef_overlay(score, clefs_by_staff, clef_detections, artifacts)
     save_notes_visualization(
+        raw_notes_mask=notes_mask_raw,
         notes_mask=notes_mask,
         score=score,
         artifacts=artifacts,

@@ -221,16 +221,18 @@ def _draw_stem_augmentation(
 
 
 def save_notes_visualization(
+    raw_notes_mask: MatLike | None,
     notes_mask: MatLike,
     score: Score,
     artifacts,
     intermediates_by_measure: dict[tuple[int, int], dict] | None = None,
 ) -> dict:
+    """Save note detection visualizations and intermediates."""
     paths = {}
 
-    if notes_mask is not None:
+    if raw_notes_mask is not None:
         paths["01_notes_mask"] = artifacts.write_image(
-            artifacts.sections.masks, "01_notes_mask.jpg", cv.bitwise_not(notes_mask)
+            artifacts.sections.masks, "01_notes_mask.jpg", cv.bitwise_not(raw_notes_mask)
         )
 
     morph_dir = artifacts.ensure_subdir(artifacts.sections.notes, "02_morphological")

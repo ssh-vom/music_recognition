@@ -146,7 +146,15 @@ def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
     return _repair_slits(result, staffs)
 
 
-def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> MatLike:
+def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> tuple[MatLike, MatLike]:
+    """
+    Erase staff lines for note detection.
+    
+    Returns:
+        Tuple of (raw_adaptive_mask, processed_mask)
+        - raw_adaptive_mask: Binary image after adaptive thresholding (staff lines intact)
+        - processed_mask: After staff removal and slit repair
+    """
     inverted = cv.bitwise_not(gray)
     bw = cv.adaptiveThreshold(
         inverted, MASK_FOREGROUND, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
@@ -158,7 +166,9 @@ def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> MatLike:
 
     allowed = _staff_removal_band_mask(bw.shape, staffs)
     result = cv.subtract(bw, cv.bitwise_and(staff_reconstruction, allowed))
-    return _repair_slits(result, staffs)
+    processed = _repair_slits(result, staffs)
+    
+    return bw, processed
 
 
 def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:
