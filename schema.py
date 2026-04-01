@@ -137,14 +137,9 @@ class Score:
     notes: list[Note]
     clefs: dict[int, Clef]
     clef_detections: dict[int, ClefDetection]
-    notes_mask: MatLike | None = None
-    bars_mask: MatLike | None = None
 
     def get_measures_for_staff(self, staff_index: int) -> list[Measure]:
         return [m for m in self.measures if m.staff_index == staff_index]
-
-    def get_notes_for_staff(self, staff_index: int) -> list[Note]:
-        return [n for n in self.notes if n.staff_index == staff_index]
 
     def get_notes_for_measure(self, staff_index: int, measure_index: int) -> list[Note]:
         return [
