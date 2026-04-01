@@ -1,5 +1,6 @@
 """Complete sheet music processing pipeline."""
 
+from dataclasses import dataclass
 import re
 from statistics import median
 
@@ -8,7 +9,7 @@ import pytesseract
 from cv2.typing import MatLike
 
 from abc_export import write_abc_file
-from accidental_detection import detect_key_signature_accidentals
+from accidental_detection import detect_header_key_signature
 from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
 from clef_detection import detect_clef
@@ -49,6 +50,16 @@ from visualization import (
     save_notes_visualization,
     save_staff_detection,
 )
+
+
+@dataclass(frozen=True)
+class HeaderAnalysis:
+    header_accidentals: list[Accidental]
+    key_signature: KeySignature
+    time_signature: TimeSignature | None
+    content_start_x: int | None
+    search_min_x: int | None = None
+    search_max_x: int | None = None
 
 
 def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
@@ -104,32 +115,37 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     save_clef_visualization(clef_key_crops, clefs_by_staff, clef_detections, artifacts)
     print(f"  {[clef.kind for clef in clefs_by_staff.values()]}")
 
-    header_accidentals = _detect_first_staff_header_accidentals(
+    header = _analyze_first_staff_header(
         clef_key_crops=clef_key_crops,
+        raw_clef_key_crops=raw_clef_key_crops,
         clefs_by_staff=clefs_by_staff,
         staffs=staffs,
         bars=bars,
     )
-    first_staff_time_sig = _detect_first_staff_time_signature(
-        clef_key_crops=raw_clef_key_crops,
-        clefs_by_staff=clefs_by_staff,
-        staffs=staffs,
-        bars=bars,
-    )
-    if first_staff_time_sig is not None and 0 in clefs_by_staff:
-        clefs_by_staff[0].time_signature = first_staff_time_sig
-    _apply_detected_key_signature(clefs_by_staff, header_accidentals)
+    for clef in clefs_by_staff.values():
+        clef.key_signature = header.key_signature
+    if header.time_signature is not None and 0 in clefs_by_staff:
+        clefs_by_staff[0].time_signature = header.time_signature
 
     print("Splitting into measures...")
+    content_start_overrides = (
+        {0: header.content_start_x} if header.content_start_x is not None else None
+    )
     measures_map = split_measures(
         bars=bars,
         staffs=staffs,
         left_header_spacings=5.2,
-        first_staff_conservative_spacings=7.0,
+        content_start_overrides=content_start_overrides,
     )
     measure_crops = crop_measures(
         measures_map=measures_map,
         notes_image=notes_mask,
+    )
+    _refine_first_measure_start(
+        measures_map=measures_map,
+        measure_crops=measure_crops,
+        notes_mask=notes_mask,
+        staffs=staffs,
     )
     save_measure_visualization(
         sheet_image=raw_bgr,
@@ -151,8 +167,8 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         measures_map=measures_map,
         measure_crops=measure_crops,
     )
-    if header_accidentals and 0 in score.clefs:
-        score.clefs[0].key_header_glyphs = header_accidentals
+    if header.header_accidentals and 0 in score.clefs:
+        score.clefs[0].key_header_glyphs = header.header_accidentals
 
     print("Detecting notes...")
     note_intermediates = _populate_notes(score)
@@ -166,23 +182,16 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         artifacts=artifacts,
         intermediates_by_measure=note_intermediates,
     )
-    if staffs:
+    if staffs and header.search_min_x is not None and header.search_max_x is not None:
         crop = raw_clef_key_crops.get(0)
         detection_crop = clef_key_crops.get(0)
-        clef = clefs_by_staff.get(0)
-        if crop is not None and detection_crop is not None and clef is not None:
-            min_x, max_x = _first_staff_header_search_bounds(
-                crop=detection_crop,
-                clef=clef,
-                staff=staffs[0],
-                bars=bars,
-            )
+        if crop is not None and detection_crop is not None:
             save_first_staff_accidental_visualization(
                 raw_crop=crop,
                 detection_crop=detection_crop,
-                header_accidentals=header_accidentals,
-                min_x=min_x,
-                max_x=max_x,
+                header_accidentals=header.header_accidentals,
+                min_x=header.search_min_x,
+                max_x=header.search_max_x,
                 artifacts=artifacts,
             )
 
@@ -220,141 +229,186 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     return score
 
 
-def _detect_first_staff_header_accidentals(
+def _analyze_first_staff_header(
     clef_key_crops: dict[int, MatLike],
+    raw_clef_key_crops: dict[int, MatLike],
     clefs_by_staff: dict[int, Clef],
     staffs: list[Staff],
     bars: list[BarLine],
-) -> list[Accidental]:
-    crop = clef_key_crops.get(0)
+) -> HeaderAnalysis:
     clef = clefs_by_staff.get(0)
+    default_content_start = clef.x_end if clef is not None else None
+    default = HeaderAnalysis(
+        header_accidentals=[],
+        key_signature=KeySignature(fifths=0, mode="major"),
+        time_signature=None,
+        content_start_x=default_content_start,
+    )
+
+    if not staffs or clef is None:
+        return default
+
+    detection_crop = clef_key_crops.get(0)
+    raw_crop = raw_clef_key_crops.get(0)
+    if detection_crop is None or raw_crop is None:
+        return default
+
+    staff = staffs[0]
+    min_x, max_x, bar_limit_x = _header_search_window(
+        crop=detection_crop,
+        clef=clef,
+        staff=staff,
+        bars=bars,
+    )
 
     try:
-        min_x, max_x = _first_staff_header_search_bounds(
-            crop=crop,
-            clef=clef,
-            staff=staffs[0],
-            bars=bars,
-        )
-        accidentals = detect_key_signature_accidentals(
-            clef_key_crop=crop,
-            staff=staffs[0],
+        accidentals = detect_header_key_signature(
+            clef_key_crop=detection_crop,
+            staff=staff,
             staff_index=0,
             x_start=min_x,
             x_end=max_x + 1,
         )
-        accidentals = _dedup_accidentals_by_x(
-            accidentals=accidentals,
-            x_tol=max(2, int(round(staffs[0].spacing * 0.60))),
-        )
-        accidentals = _reclassify_header_accidentals(
-            accidentals=accidentals, crop=crop, staff_spacing=staffs[0].spacing
-        )
-        accidentals = _dedup_accidentals_by_component(
-            accidentals=accidentals, crop=crop, staff_spacing=staffs[0].spacing
-        )
-        return _keep_dominant_accidental_kind(accidentals)
     except FileNotFoundError:
-        return []
+        accidentals = []
+
+    time_signature = None
+    time_x_start = max(0, int(round(raw_crop.shape[1] * 0.40)))
+    time_x_end = min(raw_crop.shape[1], bar_limit_x + 1)
+    if time_x_end - time_x_start >= max(6, int(round(staff.spacing * 0.8))):
+        try:
+            time_signature = _detect_time_signature_from_roi(
+                raw_crop[:, time_x_start:time_x_end]
+            )
+        except pytesseract.TesseractNotFoundError:
+            pass
+
+    return HeaderAnalysis(
+        header_accidentals=accidentals,
+        key_signature=_key_signature_from_header_accidentals(accidentals),
+        time_signature=time_signature,
+        content_start_x=default_content_start,
+        search_min_x=min_x,
+        search_max_x=max_x,
+    )
 
 
-def _first_staff_header_search_bounds(
+def _header_search_window(
     crop: MatLike,
     clef: Clef,
     staff: Staff,
     bars: list[BarLine],
-) -> tuple[int, int]:
-    min_x = _header_search_left_x(crop=crop, staff_spacing=staff.spacing)
-    max_x = _first_barline_x_limit_for_header(
-        bars=bars,
-        clef=clef,
-        crop_width=crop.shape[1],
-        staff_spacing=staff.spacing,
-    )
-    max_x = _header_search_right_x(
-        crop=crop, default_max_x=max_x, staff_spacing=staff.spacing
-    )
-    return min_x, max_x
+) -> tuple[int, int, int]:
+    crop_width = crop.shape[1]
+    margin = max(1, int(round(staff.spacing * 0.15)))
+    bar_limit_x = crop_width - 1
 
+    staff_bars = sorted([bar for bar in bars if bar.staff_index == 0], key=lambda bar: bar.x)
+    if staff_bars:
+        bar_limit_x = min(
+            bar_limit_x,
+            max(0, staff_bars[0].x - clef.x_start - max(1, int(round(staff.spacing * 0.2)))),
+        )
 
-def _header_search_left_x(crop: MatLike, staff_spacing: float) -> int:
     count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
-    min_area = max(8, int(round(staff_spacing * staff_spacing * 0.20)))
-    best_right = 0
-    best_x = None
-
-    for i in range(1, count):
-        area = int(stats[i, cv.CC_STAT_AREA])
-        if area < min_area:
-            continue
-        x = int(stats[i, cv.CC_STAT_LEFT])
-        w = int(stats[i, cv.CC_STAT_WIDTH])
-        if best_x is None or x < best_x:
-            best_x = x
-            best_right = x + w
-
-    margin = max(1, int(round(staff_spacing * 0.15)))
-    return max(0, min(crop.shape[1] - 1, best_right + margin))
-
-
-def _header_search_right_x(
-    crop: MatLike, default_max_x: int, staff_spacing: float
-) -> int:
-    count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
-    min_area = max(8, int(round(staff_spacing * staff_spacing * 0.20)))
     components = []
-
-    for i in range(1, count):
-        area = int(stats[i, cv.CC_STAT_AREA])
-        if area < min_area:
+    min_area = max(8, int(round(staff.spacing * staff.spacing * 0.20)))
+    for index in range(1, count):
+        if int(stats[index, cv.CC_STAT_AREA]) < min_area:
             continue
-        x = int(stats[i, cv.CC_STAT_LEFT])
-        w = int(stats[i, cv.CC_STAT_WIDTH])
-        components.append((x, x + w, area))
+        left = int(stats[index, cv.CC_STAT_LEFT])
+        components.append((left, left + int(stats[index, cv.CC_STAT_WIDTH])))
 
-    components.sort()
-    if len(components) < 2:
-        return default_max_x
+    min_x = 0
+    max_x = bar_limit_x
+    if components:
+        components.sort()
+        min_x = min(crop_width - 1, components[0][1] + margin)
+        if len(components) > 1:
+            max_x = min(max_x, components[-1][0] - margin)
 
-    margin = max(1, int(round(staff_spacing * 0.15)))
-    return max(0, min(default_max_x, components[-1][0] - margin))
+    return min_x, max(min_x, min(crop_width - 1, max_x)), bar_limit_x
 
 
-def _detect_first_staff_time_signature(
-    clef_key_crops: dict[int, MatLike],
-    clefs_by_staff: dict[int, Clef],
+def _detect_time_signature_from_roi(time_roi: MatLike) -> TimeSignature | None:
+    if time_roi.size == 0:
+        return None
+
+    gray = to_gray(time_roi)
+    prepared = cv.resize(gray, None, fx=10.0, fy=10.0, interpolation=cv.INTER_CUBIC)
+    _, prepared = cv.threshold(prepared, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+    prepared = cv.copyMakeBorder(prepared, 8, 8, 8, 8, cv.BORDER_CONSTANT, value=255)
+    if prepared.size == 0:
+        return None
+
+    def ocr_numbers(image: MatLike, psm: int) -> list[int]:
+        if image.size == 0:
+            return []
+        config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist=0123456789"
+        text = pytesseract.image_to_string(image, config=config)
+        return [int(token) for token in re.findall(r"\d+", text)]
+
+    mid = prepared.shape[0] // 2
+    top_tokens = ocr_numbers(prepared[:mid, :], psm=10)
+    bottom_tokens = ocr_numbers(prepared[mid:, :], psm=10)
+    if len(top_tokens) == 1 and len(bottom_tokens) == 1:
+        return TimeSignature(numerator=top_tokens[0], denominator=bottom_tokens[0])
+
+    tokens = ocr_numbers(prepared, psm=6)
+    if len(tokens) == 2:
+        return TimeSignature(numerator=tokens[0], denominator=tokens[1])
+
+    common_time = cv.resize(gray, None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC)
+    config = "--oem 3 --psm 8 -c tessedit_char_whitelist=Cc"
+    if pytesseract.image_to_string(common_time, config=config).strip().lower() == "c":
+        return TimeSignature(numerator=4, denominator=4)
+
+    return None
+
+
+def _refine_first_measure_start(
+    measures_map: dict[int, list],
+    measure_crops: dict[int, list[MatLike]],
+    notes_mask: MatLike,
     staffs: list[Staff],
-    bars: list[BarLine],
-) -> TimeSignature | None:
-    if not staffs:
-        return None
-
-    crop = clef_key_crops.get(0)
-    clef = clefs_by_staff.get(0)
-    if crop is None or clef is None or crop.size == 0:
-        return None
-
-    max_x = _first_barline_x_limit_for_header(
-        bars=bars, clef=clef, crop_width=crop.shape[1], staff_spacing=staffs[0].spacing
-    )
-    time_roi = _time_signature_roi(
-        crop=crop, max_x=max_x, staff_spacing=staffs[0].spacing
-    )
-    if time_roi is None:
-        return None
-
-    try:
-        return _ocr_time_signature(time_roi)
-    except pytesseract.TesseractNotFoundError:
-        return None
-
-
-def _apply_detected_key_signature(
-    clefs_by_staff: dict[int, Clef], header_accidentals: list[Accidental]
 ) -> None:
-    key_signature = _key_signature_from_header_accidentals(header_accidentals)
-    for clef in clefs_by_staff.values():
-        clef.key_signature = key_signature
+    if not staffs or not measures_map.get(0) or not measure_crops.get(0):
+        return
+
+    staff = staffs[0]
+    first_measure = measures_map[0][0]
+    first_crop = measure_crops[0][0]
+    if first_crop is None or first_crop.size == 0:
+        return
+
+    detected_notes, _ = find_notes(
+        mask=first_crop,
+        staff=staff,
+        measure=first_measure,
+        measure_index=0,
+    )
+    if len(detected_notes) < 3:
+        return
+
+    detected_notes.sort(key=lambda note: note.center_x)
+    left_edge_threshold = max(2, int(round(staff.spacing * 0.40)))
+    if detected_notes[0].center_x > left_edge_threshold:
+        return
+
+    typical_step = median(note.step for note in detected_notes[1:])
+    if detected_notes[0].step < typical_step + 2:
+        return
+
+    shift = detected_notes[0].center_x + max(1, int(round(staff.spacing * 0.40)))
+    new_start = min(first_measure.x_end - 1, first_measure.x_start + shift)
+    if new_start <= first_measure.x_start:
+        return
+
+    first_measure.x_start = new_start
+    measure_crops[0][0] = notes_mask[
+        first_measure.y_top : first_measure.y_bottom + 1,
+        first_measure.x_start : first_measure.x_end,
+    ]
 
 
 def _key_signature_from_header_accidentals(
@@ -371,203 +425,6 @@ def _key_signature_from_header_accidentals(
         fifths = 0
 
     return KeySignature(fifths=fifths, mode="major")
-
-
-def _time_signature_roi(
-    crop: MatLike, max_x: int, staff_spacing: float
-) -> MatLike | None:
-    if crop.size == 0:
-        return None
-
-    x_start = max(0, int(round(crop.shape[1] * 0.40)))
-    x_end = min(crop.shape[1], max_x + 1)
-    if x_end - x_start < max(6, int(round(staff_spacing * 0.8))):
-        return None
-
-    roi = crop[:, x_start:x_end]
-    return roi if roi.size > 0 else None
-
-
-def _ocr_time_signature(time_roi: MatLike) -> TimeSignature | None:
-    prepared = _prepare_time_signature_for_ocr(time_roi)
-    if prepared.size == 0:
-        return None
-
-    mid = prepared.shape[0] // 2
-    top_number = _ocr_single_number(prepared[:mid, :])
-    bottom_number = _ocr_single_number(prepared[mid:, :])
-    if top_number is not None and bottom_number is not None:
-        return TimeSignature(numerator=top_number, denominator=bottom_number)
-
-    tokens = _ocr_number_tokens(prepared, psm=6)
-    if len(tokens) == 2:
-        return TimeSignature(numerator=tokens[0], denominator=tokens[1])
-
-    if _looks_like_common_time(time_roi):
-        return TimeSignature(numerator=4, denominator=4)
-
-    return None
-
-
-def _prepare_time_signature_for_ocr(time_roi: MatLike) -> MatLike:
-    gray = to_gray(time_roi)
-    scaled = cv.resize(gray, None, fx=10.0, fy=10.0, interpolation=cv.INTER_CUBIC)
-    _, thresholded = cv.threshold(scaled, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
-    return cv.copyMakeBorder(thresholded, 8, 8, 8, 8, cv.BORDER_CONSTANT, value=255)
-
-
-def _ocr_single_number(image: MatLike) -> int | None:
-    tokens = _ocr_number_tokens(image, psm=10)
-    return tokens[0] if len(tokens) == 1 else None
-
-
-def _ocr_number_tokens(image: MatLike, psm: int) -> list[int]:
-    if image.size == 0:
-        return []
-    config = f"--oem 3 --psm {psm} -c tessedit_char_whitelist=0123456789"
-    text = pytesseract.image_to_string(image, config=config)
-    return [int(t) for t in re.findall(r"\d+", text)]
-
-
-def _looks_like_common_time(time_roi: MatLike) -> bool:
-    scaled = cv.resize(
-        to_gray(time_roi), None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC
-    )
-    config = "--oem 3 --psm 8 -c tessedit_char_whitelist=Cc"
-    return pytesseract.image_to_string(scaled, config=config).strip().lower() == "c"
-
-
-def _first_barline_x_limit_for_header(
-    bars: list[BarLine], clef: Clef, crop_width: int, staff_spacing: float
-) -> int:
-    staff_bars = sorted(
-        [b for b in bars if b.staff_index == clef.staff_index], key=lambda b: b.x
-    )
-    if not staff_bars:
-        return max(0, crop_width - 1)
-
-    margin = max(1, int(round(staff_spacing * 0.2)))
-    max_x = staff_bars[0].x - clef.x_start - margin
-    return max(0, min(crop_width - 1, max_x))
-
-
-def _dedup_accidentals_by_x(
-    accidentals: list[Accidental], x_tol: int
-) -> list[Accidental]:
-    if len(accidentals) < 2:
-        return accidentals
-
-    kept = []
-    for glyph in sorted(accidentals, key=lambda g: g.confidence, reverse=True):
-        if any(abs(glyph.center_x - other.center_x) <= x_tol for other in kept):
-            continue
-        kept.append(glyph)
-
-    kept.sort(key=lambda g: g.center_x)
-    return kept
-
-
-def _keep_dominant_accidental_kind(accidentals: list[Accidental]) -> list[Accidental]:
-    if len(accidentals) < 2:
-        return accidentals
-
-    counts: dict[str, list] = {"sharp": [0, 0.0], "flat": [0, 0.0]}
-    for g in accidentals:
-        counts[g.kind][0] += 1
-        counts[g.kind][1] += g.confidence
-
-    if counts["sharp"][0] > counts["flat"][0]:
-        dominant = "sharp"
-    elif counts["flat"][0] > counts["sharp"][0]:
-        dominant = "flat"
-    else:
-        dominant = "sharp" if counts["sharp"][1] >= counts["flat"][1] else "flat"
-
-    return [g for g in accidentals if g.kind == dominant]
-
-
-def _reclassify_header_accidentals(
-    accidentals: list[Accidental], crop: MatLike, staff_spacing: float
-) -> list[Accidental]:
-    if not accidentals or crop.size == 0:
-        return accidentals
-
-    count, labels, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
-    min_area = max(8, int(round(staff_spacing * staff_spacing * 0.10)))
-    updated = []
-
-    for glyph in accidentals:
-        x = max(0, min(crop.shape[1] - 1, glyph.center_x))
-        y = max(0, min(crop.shape[0] - 1, glyph.center_y))
-        label = int(labels[y, x])
-        if label <= 0 or int(stats[label, cv.CC_STAT_AREA]) < min_area:
-            updated.append(glyph)
-            continue
-
-        left = int(stats[label, cv.CC_STAT_LEFT])
-        top = int(stats[label, cv.CC_STAT_TOP])
-        w = int(stats[label, cv.CC_STAT_WIDTH])
-        h = int(stats[label, cv.CC_STAT_HEIGHT])
-        comp = (labels[top : top + h, left : left + w] == label).astype("uint8")
-        tall_threshold = max(3, int(round(h * 0.75)))
-        tall_cols = [i for i, v in enumerate(comp.sum(axis=0)) if v >= tall_threshold]
-
-        tall_clusters = 0
-        if tall_cols:
-            tall_clusters = 1
-            prev = tall_cols[0]
-            for v in tall_cols[1:]:
-                if v - prev > 1:
-                    tall_clusters += 1
-                prev = v
-
-        if tall_clusters >= 2:
-            kind = "sharp"
-        elif tall_clusters == 1:
-            kind = "flat"
-        else:
-            kind = glyph.kind
-
-        updated.append(
-            Accidental(
-                kind=kind,
-                staff_index=glyph.staff_index,
-                measure_index=glyph.measure_index,
-                center_x=glyph.center_x,
-                center_y=glyph.center_y,
-                confidence=glyph.confidence,
-                region=glyph.region,
-            )
-        )
-
-    return updated
-
-
-def _dedup_accidentals_by_component(
-    accidentals: list[Accidental], crop: MatLike, staff_spacing: float
-) -> list[Accidental]:
-    if len(accidentals) < 2 or crop.size == 0:
-        return accidentals
-
-    count, labels, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
-    min_area = max(8, int(round(staff_spacing * staff_spacing * 0.10)))
-    best_by_label: dict[int, Accidental] = {}
-    no_label = []
-
-    for glyph in accidentals:
-        x = max(0, min(crop.shape[1] - 1, glyph.center_x))
-        y = max(0, min(crop.shape[0] - 1, glyph.center_y))
-        label = int(labels[y, x])
-        if label <= 0 or int(stats[label, cv.CC_STAT_AREA]) < min_area:
-            no_label.append(glyph)
-            continue
-        current = best_by_label.get(label)
-        if current is None or glyph.confidence > current.confidence:
-            best_by_label[label] = glyph
-
-    kept = list(best_by_label.values()) + no_label
-    kept.sort(key=lambda g: g.center_x)
-    return kept
 
 
 def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
@@ -590,9 +447,6 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
             )
             intermediates_by_measure[(staff_index, measure_index)] = intermediates
 
-            detected_notes = _remove_left_edge_header_bleed(
-                detected_notes, staff, measure_index
-            )
             detected_notes = refine_beamed_durations(
                 mask=measure.crop, notes=detected_notes, staff=staff
             )
@@ -602,16 +456,3 @@ def _populate_notes(score: Score) -> dict[tuple[int, int], dict]:
             score.notes.extend(detected_notes)
 
     return intermediates_by_measure
-
-
-def _remove_left_edge_header_bleed(
-    notes: list[Note], staff: Staff, measure_index: int
-) -> list[Note]:
-    if measure_index != 0 or len(notes) < 3:
-        return notes
-    if notes[0].center_x > max(2, int(round(staff.spacing * 0.40))):
-        return notes
-    typical_step = median(note.step for note in notes[1:])
-    return notes[1:] if notes[0].step >= typical_step + 2 else notes
-
-

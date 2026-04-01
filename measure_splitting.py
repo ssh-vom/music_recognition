@@ -21,13 +21,16 @@ def split_measures(
     *,
     left_header_spacings: float = LEFT_HEADER_SPACINGS,
     first_staff_conservative_spacings: float = 7.0,
+    content_start_overrides: dict[int, int] | None = None,
 ) -> dict[int, list[Measure]]:
     # Get the barlines grouped by staff
     barlines_by_staff = _group_barlines_by_staff(bars, len(staffs))
     measures_map = {}  # map staff index to list of measures
 
+    content_start_overrides = content_start_overrides or {}
+
     for staff_index, staff in enumerate(staffs):
-        # split each staff based on it's index, and any left side spacing we need to crop out
+        # split each staff based on its index, and any left side spacing we need to crop out
         # this is to avoid any clefs or other artifacts like key or time signature from getting
         # in the way of our measure splitting
         measures_map[staff_index] = _split_staff(
@@ -35,10 +38,11 @@ def split_measures(
             staff_index=staff_index,
             staff_bars=barlines_by_staff[staff_index],
             left_header_spacings=left_header_spacings,
+            content_start_override=content_start_overrides.get(staff_index),
         )
 
-    # if we have the first staff index, we want to start after the clef/time signature
-    if 0 in measures_map:
+    # If no explicit header end was supplied for the first staff, keep the old conservative fallback.
+    if 0 in measures_map and measures_map[0] and 0 not in content_start_overrides:
         first_staff = staffs[0]
         safe_starting_point = _staff_left(first_staff) + int(
             round(first_staff.spacing * first_staff_conservative_spacings)
@@ -100,12 +104,17 @@ def _split_staff(
     staff_index: int,
     staff_bars: list,
     left_header_spacings: float = LEFT_HEADER_SPACINGS,
+    content_start_override: int | None = None,
 ) -> list[Measure]:
     if not staff.lines:
         return []
 
     staff_right = _staff_right(staff)
-    content_start_x = _content_start_x(staff, left_header_spacings)
+    if content_start_override is None:
+        content_start_x = _content_start_x(staff, left_header_spacings)
+    else:
+        staff_left = _staff_left(staff)
+        content_start_x = max(staff_left, min(staff_right, content_start_override))
 
     if content_start_x >= staff_right:
         return []

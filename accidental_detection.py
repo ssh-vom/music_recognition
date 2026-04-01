@@ -78,6 +78,23 @@ def detect_key_signature_accidentals(
     return accidentals
 
 
+def detect_header_key_signature(
+    clef_key_crop: MatLike,
+    staff,
+    staff_index: int,
+    x_start: int,
+    x_end: int,
+) -> list[Accidental]:
+    accidentals = detect_key_signature_accidentals(
+        clef_key_crop=clef_key_crop,
+        staff=staff,
+        staff_index=staff_index,
+        x_start=x_start,
+        x_end=x_end,
+    )
+    return _clean_header_accidentals(accidentals, clef_key_crop, staff.spacing)
+
+
 def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:
     if roi.shape[0] < 4 or roi.shape[1] < 4:
         return []
@@ -144,6 +161,95 @@ def _detect_header_accidentals_geometric(
             out.append((0.85, x + w // 2, y + h // 2, "flat"))
 
     return out
+
+
+def _clean_header_accidentals(
+    accidentals: list[Accidental], crop: MatLike, spacing: float
+) -> list[Accidental]:
+    if not accidentals or crop.size == 0:
+        return []
+
+    deduped = _dedup_by_x(accidentals, max(2, int(round(spacing * 0.60))))
+    if len(deduped) < 2:
+        return deduped
+
+    count, labels, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
+    min_area = max(8, int(round(spacing * spacing * 0.10)))
+    best_by_label: dict[int, Accidental] = {}
+    unlabeled: list[Accidental] = []
+
+    for glyph in deduped:
+        x = max(0, min(crop.shape[1] - 1, glyph.center_x))
+        y = max(0, min(crop.shape[0] - 1, glyph.center_y))
+        label = int(labels[y, x])
+        if label <= 0 or int(stats[label, cv.CC_STAT_AREA]) < min_area:
+            unlabeled.append(glyph)
+            continue
+
+        cleaned = Accidental(
+            kind=_accidental_kind_from_component(label, labels, stats) or glyph.kind,
+            staff_index=glyph.staff_index,
+            measure_index=glyph.measure_index,
+            center_x=glyph.center_x,
+            center_y=glyph.center_y,
+            confidence=glyph.confidence,
+            region=glyph.region,
+        )
+        current = best_by_label.get(label)
+        if current is None or cleaned.confidence > current.confidence:
+            best_by_label[label] = cleaned
+
+    cleaned = sorted(
+        [*best_by_label.values(), *unlabeled], key=lambda glyph: glyph.center_x
+    )
+    return _keep_dominant_kind(cleaned)
+
+
+def _dedup_by_x(accidentals: list[Accidental], x_tol: int) -> list[Accidental]:
+    kept: list[Accidental] = []
+    for glyph in sorted(accidentals, key=lambda g: g.confidence, reverse=True):
+        if any(abs(glyph.center_x - other.center_x) <= x_tol for other in kept):
+            continue
+        kept.append(glyph)
+    kept.sort(key=lambda glyph: glyph.center_x)
+    return kept
+
+
+def _accidental_kind_from_component(label: int, labels, stats) -> str | None:
+    left = int(stats[label, cv.CC_STAT_LEFT])
+    top = int(stats[label, cv.CC_STAT_TOP])
+    width = int(stats[label, cv.CC_STAT_WIDTH])
+    height = int(stats[label, cv.CC_STAT_HEIGHT])
+    component = (labels[top : top + height, left : left + width] == label).astype(np.uint8)
+    tall_threshold = max(3, int(round(height * 0.75)))
+    tall_cols = [
+        idx for idx, value in enumerate(np.sum(component, axis=0)) if value >= tall_threshold
+    ]
+    tall_clusters = _count_index_clusters(tall_cols)
+    if tall_clusters >= 2:
+        return "sharp"
+    if tall_clusters == 1:
+        return "flat"
+    return None
+
+
+def _keep_dominant_kind(accidentals: list[Accidental]) -> list[Accidental]:
+    if len(accidentals) < 2:
+        return accidentals
+
+    counts: dict[str, list[float]] = {"sharp": [0, 0.0], "flat": [0, 0.0]}
+    for glyph in accidentals:
+        counts[glyph.kind][0] += 1
+        counts[glyph.kind][1] += glyph.confidence
+
+    if counts["sharp"][0] > counts["flat"][0]:
+        dominant = "sharp"
+    elif counts["flat"][0] > counts["sharp"][0]:
+        dominant = "flat"
+    else:
+        dominant = "sharp" if counts["sharp"][1] >= counts["flat"][1] else "flat"
+
+    return [glyph for glyph in accidentals if glyph.kind == dominant]
 
 
 def _count_index_clusters(indices: list[int], max_gap: int = 1) -> int:
