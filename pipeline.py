@@ -1,6 +1,5 @@
 """Complete sheet music processing pipeline."""
 
-from dataclasses import dataclass
 import re
 from statistics import median
 
@@ -29,11 +28,11 @@ from schema import (
     BarLine,
     Clef,
     KeySignature,
-    Note,
     Score,
     Staff,
     TimeSignature,
     build_score,
+    HeaderAnalysis,
 )
 from staff_detection import (
     erase_staff_for_bars,
@@ -50,16 +49,6 @@ from visualization import (
     save_notes_visualization,
     save_staff_detection,
 )
-
-
-@dataclass(frozen=True)
-class HeaderAnalysis:
-    header_accidentals: list[Accidental]
-    key_signature: KeySignature
-    time_signature: TimeSignature | None
-    content_start_x: int | None
-    search_min_x: int | None = None
-    search_max_x: int | None = None
 
 
 def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
@@ -303,11 +292,18 @@ def _header_search_window(
     margin = max(1, int(round(staff.spacing * 0.15)))
     bar_limit_x = crop_width - 1
 
-    staff_bars = sorted([bar for bar in bars if bar.staff_index == 0], key=lambda bar: bar.x)
+    staff_bars = sorted(
+        [bar for bar in bars if bar.staff_index == 0], key=lambda bar: bar.x
+    )
     if staff_bars:
         bar_limit_x = min(
             bar_limit_x,
-            max(0, staff_bars[0].x - clef.x_start - max(1, int(round(staff.spacing * 0.2)))),
+            max(
+                0,
+                staff_bars[0].x
+                - clef.x_start
+                - max(1, int(round(staff.spacing * 0.2))),
+            ),
         )
 
     count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)

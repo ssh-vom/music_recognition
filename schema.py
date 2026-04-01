@@ -127,6 +127,16 @@ class Note:
     duration_class: DurationClass | None = None
 
 
+@dataclass(frozen=True)
+class HeaderAnalysis:
+    header_accidentals: list[Accidental]
+    key_signature: KeySignature
+    time_signature: TimeSignature | None
+    content_start_x: int | None
+    search_min_x: int | None = None
+    search_max_x: int | None = None
+
+
 @dataclass
 class Score:
     image_path: str
