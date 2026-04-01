@@ -36,45 +36,6 @@ def _load_template(path: Path) -> MatLike:
     return to_gray(image)
 
 
-def detect_measure_accidentals(
-    mask: MatLike,
-    staff,
-    measure,
-    measure_index: int,
-    detected_notes: list,
-) -> list[Accidental]:
-    """Detect sharps and flats in a measure (left of first notehead)."""
-    first_note_x = _exclusive_x_before_first_note(staff, detected_notes)
-    if first_note_x is None or first_note_x < 4:
-        return []
-
-    roi = cv.bitwise_not(mask)
-    if roi.size == 0:
-        return []
-
-    x_end = min(first_note_x, roi.shape[1])
-    if x_end < 4:
-        return []
-    roi = roi[:, :x_end]
-
-    matches = _match_templates_in_roi(roi, staff.spacing)
-
-    accidentals = [
-        Accidental(
-            kind=kind,
-            staff_index=measure.staff_index,
-            measure_index=measure_index,
-            center_x=cx,
-            center_y=cy,
-            confidence=score,
-            region="measure",
-        )
-        for score, cx, cy, kind in matches
-    ]
-    accidentals.sort(key=lambda a: (a.center_x, a.kind))
-    return accidentals
-
-
 def detect_key_signature_accidentals(
     clef_key_crop: MatLike,
     staff,
