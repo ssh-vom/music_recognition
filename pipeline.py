@@ -27,7 +27,6 @@ from schema import (
     Accidental,
     BarLine,
     Clef,
-    ClefDetection,
     KeySignature,
     Note,
     Score,
@@ -41,12 +40,11 @@ from staff_detection import (
     find_staffs,
 )
 from visualization import (
-    choose_clef_overlay_rect,
     draw_bars_overlay,
-    draw_clef_match_box,
-    save_accidental_visualization,
     save_bar_visualization,
     save_clef_visualization,
+    save_first_staff_accidental_visualization,
+    save_full_clef_overlay,
     save_measure_visualization,
     save_notes_visualization,
     save_staff_detection,
@@ -161,22 +159,32 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     print(f"  {len(score.notes)} note(s)")
 
     print("Creating visualizations...")
-    _create_full_overlays(score, clefs_by_staff, clef_detections, artifacts)
+    save_full_clef_overlay(score, clefs_by_staff, clef_detections, artifacts)
     save_notes_visualization(
         notes_mask=notes_mask,
         score=score,
         artifacts=artifacts,
         intermediates_by_measure=note_intermediates,
     )
-    _save_first_staff_accidental_visualization(
-        raw_clef_key_crops=raw_clef_key_crops,
-        clef_key_crops=clef_key_crops,
-        header_accidentals=header_accidentals,
-        bars=bars,
-        clefs_by_staff=clefs_by_staff,
-        staffs=staffs,
-        artifacts=artifacts,
-    )
+    if staffs:
+        crop = raw_clef_key_crops.get(0)
+        detection_crop = clef_key_crops.get(0)
+        clef = clefs_by_staff.get(0)
+        if crop is not None and detection_crop is not None and clef is not None:
+            min_x, max_x = _first_staff_header_search_bounds(
+                crop=detection_crop,
+                clef=clef,
+                staff=staffs[0],
+                bars=bars,
+            )
+            save_first_staff_accidental_visualization(
+                raw_crop=crop,
+                detection_crop=detection_crop,
+                header_accidentals=header_accidentals,
+                min_x=min_x,
+                max_x=max_x,
+                artifacts=artifacts,
+            )
 
     artifacts.write_text(
         artifacts.sections.logs,
@@ -222,15 +230,11 @@ def _detect_first_staff_header_accidentals(
     clef = clefs_by_staff.get(0)
 
     try:
-        min_x = _header_search_left_x(crop=crop, staff_spacing=staffs[0].spacing)
-        max_x = _first_barline_x_limit_for_header(
-            bars=bars,
+        min_x, max_x = _first_staff_header_search_bounds(
+            crop=crop,
             clef=clef,
-            crop_width=crop.shape[1],
-            staff_spacing=staffs[0].spacing,
-        )
-        max_x = _header_search_right_x(
-            crop=crop, default_max_x=max_x, staff_spacing=staffs[0].spacing
+            staff=staffs[0],
+            bars=bars,
         )
         accidentals = detect_key_signature_accidentals(
             clef_key_crop=crop,
@@ -254,50 +258,23 @@ def _detect_first_staff_header_accidentals(
         return []
 
 
-def _save_first_staff_accidental_visualization(
-    raw_clef_key_crops: dict[int, MatLike],
-    clef_key_crops: dict[int, MatLike],
-    header_accidentals: list[Accidental],
+def _first_staff_header_search_bounds(
+    crop: MatLike,
+    clef: Clef,
+    staff: Staff,
     bars: list[BarLine],
-    clefs_by_staff: dict[int, Clef],
-    staffs: list[Staff],
-    artifacts: ArtifactWriter,
-) -> None:
-    if not staffs:
-        return
-
-    crop = raw_clef_key_crops.get(0)
-    detection_crop = clef_key_crops.get(0)
-    clef = clefs_by_staff.get(0)
-    if crop is None or detection_crop is None or clef is None:
-        return
-
-    overlay = crop.copy()
-    min_x = _header_search_left_x(crop=detection_crop, staff_spacing=staffs[0].spacing)
+) -> tuple[int, int]:
+    min_x = _header_search_left_x(crop=crop, staff_spacing=staff.spacing)
     max_x = _first_barline_x_limit_for_header(
-        bars=bars, clef=clef, crop_width=crop.shape[1], staff_spacing=staffs[0].spacing
+        bars=bars,
+        clef=clef,
+        crop_width=crop.shape[1],
+        staff_spacing=staff.spacing,
     )
     max_x = _header_search_right_x(
-        crop=detection_crop, default_max_x=max_x, staff_spacing=staffs[0].spacing
+        crop=crop, default_max_x=max_x, staff_spacing=staff.spacing
     )
-    cv.line(
-        overlay,
-        (min_x, 0),
-        (min_x, max(0, overlay.shape[0] - 1)),
-        (80, 220, 80),
-        1,
-        cv.LINE_AA,
-    )
-    cv.line(
-        overlay,
-        (max_x, 0),
-        (max_x, max(0, overlay.shape[0] - 1)),
-        (0, 200, 255),
-        1,
-        cv.LINE_AA,
-    )
-    _draw_header_accidental_boxes(overlay, detection_crop, header_accidentals)
-    save_accidental_visualization(overlay, header_accidentals, artifacts)
+    return min_x, max_x
 
 
 def _header_search_left_x(crop: MatLike, staff_spacing: float) -> int:
@@ -341,38 +318,6 @@ def _header_search_right_x(
 
     margin = max(1, int(round(staff_spacing * 0.15)))
     return max(0, min(default_max_x, components[-1][0] - margin))
-
-
-def _draw_header_accidental_boxes(
-    overlay: MatLike, detection_crop: MatLike, accidentals: list[Accidental]
-) -> None:
-    if detection_crop.size == 0 or not accidentals:
-        return
-
-    count, labels, stats, _ = cv.connectedComponentsWithStats(
-        detection_crop, connectivity=8
-    )
-    h, w = detection_crop.shape[:2]
-
-    for glyph in accidentals:
-        x = max(0, min(w - 1, glyph.center_x))
-        y = max(0, min(h - 1, glyph.center_y))
-        label = int(labels[y, x])
-        if label <= 0:
-            continue
-        left = int(stats[label, cv.CC_STAT_LEFT])
-        top = int(stats[label, cv.CC_STAT_TOP])
-        box_w = int(stats[label, cv.CC_STAT_WIDTH])
-        box_h = int(stats[label, cv.CC_STAT_HEIGHT])
-        color = (255, 0, 255) if glyph.kind == "sharp" else (255, 128, 0)
-        cv.rectangle(
-            overlay,
-            (left, top),
-            (left + box_w - 1, top + box_h - 1),
-            color,
-            1,
-            cv.LINE_AA,
-        )
 
 
 def _detect_first_staff_time_signature(
@@ -670,55 +615,3 @@ def _remove_left_edge_header_bleed(
     return notes[1:] if notes[0].step >= typical_step + 2 else notes
 
 
-def _create_full_overlays(
-    score: Score,
-    clefs_by_staff: dict[int, Clef],
-    clef_detections: dict[int, ClefDetection],
-    artifacts: ArtifactWriter,
-) -> None:
-    clef_overlay = score.sheet_image.copy()
-    font = cv.FONT_HERSHEY_SIMPLEX
-
-    for staff_index in range(len(score.staffs)):
-        clef = clefs_by_staff.get(staff_index)
-        det = clef_detections.get(staff_index)
-        if clef is None or det is None:
-            continue
-
-        x1, y1 = clef.x_start, clef.y_top
-        x2, y2 = clef.x_end, clef.y_bottom
-        cv.rectangle(clef_overlay, (x1, y1), (x2, y2), (100, 100, 100), 1)
-
-        choice = choose_clef_overlay_rect(clef.kind, det)
-        if choice is not None:
-            rect, color = choice
-            draw_clef_match_box(clef_overlay, rect, color, origin_x=x1, origin_y=y1)
-
-        name = clef.kind if clef.kind else "?"
-        label = f"Staff {staff_index}: {name}  T={det.letter_score_treble:.2f} B={det.letter_score_bass:.2f}"
-        (tw, th), baseline = cv.getTextSize(label, font, 0.55, 2)
-        pad = 5
-        tx, ty = x1, y2 + th + pad + 4
-        if ty + 8 > clef_overlay.shape[0]:
-            ty = y1 - 8
-        cv.rectangle(
-            clef_overlay,
-            (tx, ty - th - pad),
-            (tx + tw + 2 * pad, ty + baseline + pad),
-            (250, 250, 250),
-            -1,
-        )
-        cv.rectangle(
-            clef_overlay,
-            (tx, ty - th - pad),
-            (tx + tw + 2 * pad, ty + baseline + pad),
-            (80, 80, 80),
-            1,
-        )
-        cv.putText(
-            clef_overlay, label, (tx + pad, ty), font, 0.55, (25, 25, 25), 2, cv.LINE_AA
-        )
-
-    artifacts.write_image(
-        artifacts.sections.clef, "03_full_clef_overlay.jpg", clef_overlay
-    )

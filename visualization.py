@@ -3,7 +3,7 @@
 import cv2 as cv
 from cv2.typing import MatLike
 
-from schema import BarLine, ClefDetection, Note, Score, Staff
+from schema import Accidental, BarLine, Clef, ClefDetection, Note, Score, Staff
 
 
 def draw_staff_overlay(image: MatLike, staffs: list[Staff]) -> MatLike:
@@ -509,6 +509,121 @@ def save_clef_visualization(
             )
 
     return paths
+
+
+def save_full_clef_overlay(
+    score: Score,
+    clefs_by_staff: dict[int, Clef],
+    clef_detections: dict[int, ClefDetection],
+    artifacts,
+) -> None:
+    clef_overlay = score.sheet_image.copy()
+    font = cv.FONT_HERSHEY_SIMPLEX
+
+    for staff_index in range(len(score.staffs)):
+        clef = clefs_by_staff.get(staff_index)
+        det = clef_detections.get(staff_index)
+        if clef is None or det is None:
+            continue
+
+        x1, y1 = clef.x_start, clef.y_top
+        x2, y2 = clef.x_end, clef.y_bottom
+        cv.rectangle(clef_overlay, (x1, y1), (x2, y2), (100, 100, 100), 1)
+
+        choice = choose_clef_overlay_rect(clef.kind, det)
+        if choice is not None:
+            rect, color = choice
+            draw_clef_match_box(clef_overlay, rect, color, origin_x=x1, origin_y=y1)
+
+        name = clef.kind if clef.kind else "?"
+        label = f"Staff {staff_index}: {name}  T={det.letter_score_treble:.2f} B={det.letter_score_bass:.2f}"
+        (tw, th), baseline = cv.getTextSize(label, font, 0.55, 2)
+        pad = 5
+        tx, ty = x1, y2 + th + pad + 4
+        if ty + 8 > clef_overlay.shape[0]:
+            ty = y1 - 8
+        cv.rectangle(
+            clef_overlay,
+            (tx, ty - th - pad),
+            (tx + tw + 2 * pad, ty + baseline + pad),
+            (250, 250, 250),
+            -1,
+        )
+        cv.rectangle(
+            clef_overlay,
+            (tx, ty - th - pad),
+            (tx + tw + 2 * pad, ty + baseline + pad),
+            (80, 80, 80),
+            1,
+        )
+        cv.putText(
+            clef_overlay, label, (tx + pad, ty), font, 0.55, (25, 25, 25), 2, cv.LINE_AA
+        )
+
+    artifacts.write_image(
+        artifacts.sections.clef, "03_full_clef_overlay.jpg", clef_overlay
+    )
+
+
+def _draw_header_accidental_boxes(
+    overlay: MatLike, detection_crop: MatLike, accidentals: list[Accidental]
+) -> None:
+    if detection_crop.size == 0 or not accidentals:
+        return
+
+    count, labels, stats, _ = cv.connectedComponentsWithStats(
+        detection_crop, connectivity=8
+    )
+    h, w = detection_crop.shape[:2]
+
+    for glyph in accidentals:
+        x = max(0, min(w - 1, glyph.center_x))
+        y = max(0, min(h - 1, glyph.center_y))
+        label = int(labels[y, x])
+        if label <= 0:
+            continue
+        left = int(stats[label, cv.CC_STAT_LEFT])
+        top = int(stats[label, cv.CC_STAT_TOP])
+        box_w = int(stats[label, cv.CC_STAT_WIDTH])
+        box_h = int(stats[label, cv.CC_STAT_HEIGHT])
+        color = (255, 0, 255) if glyph.kind == "sharp" else (255, 128, 0)
+        cv.rectangle(
+            overlay,
+            (left, top),
+            (left + box_w - 1, top + box_h - 1),
+            color,
+            1,
+            cv.LINE_AA,
+        )
+
+
+def save_first_staff_accidental_visualization(
+    raw_crop: MatLike,
+    detection_crop: MatLike,
+    header_accidentals: list[Accidental],
+    min_x: int,
+    max_x: int,
+    artifacts,
+) -> dict:
+    overlay = raw_crop.copy()
+    cv.line(
+        overlay,
+        (min_x, 0),
+        (min_x, max(0, overlay.shape[0] - 1)),
+        (80, 220, 80),
+        1,
+        cv.LINE_AA,
+    )
+    cv.line(
+        overlay,
+        (max_x, 0),
+        (max_x, max(0, overlay.shape[0] - 1)),
+        (0, 200, 255),
+        1,
+        cv.LINE_AA,
+    )
+    _draw_header_accidental_boxes(overlay, detection_crop, header_accidentals)
+    return save_accidental_visualization(overlay, header_accidentals, artifacts)
 
 
 def draw_accidentals_overlay(image: MatLike, accidentals: list) -> MatLike:
