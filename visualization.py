@@ -1,7 +1,6 @@
 """Visualization functions for all detection modules."""
 
 import cv2 as cv
-import numpy as np
 from cv2.typing import MatLike
 
 from schema import BarLine, ClefDetection, Note, Score, Staff
@@ -153,45 +152,6 @@ def draw_notes_on_mask(mask: MatLike, notes: list[Note]) -> MatLike:
     return overlay
 
 
-def _draw_connected_components(mask: MatLike, count: int, stats, centroids) -> MatLike:
-    overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
-    colors = [
-        (255, 0, 0),
-        (0, 255, 0),
-        (0, 0, 255),
-        (255, 255, 0),
-        (255, 0, 255),
-        (0, 255, 255),
-        (128, 255, 0),
-        (255, 128, 0),
-        (128, 0, 255),
-        (0, 128, 255),
-    ]
-
-    for i in range(1, count):
-        x = int(stats[i, cv.CC_STAT_LEFT])
-        y = int(stats[i, cv.CC_STAT_TOP])
-        w = int(stats[i, cv.CC_STAT_WIDTH])
-        h = int(stats[i, cv.CC_STAT_HEIGHT])
-        cx = int(round(centroids[i][0]))
-        cy = int(round(centroids[i][1]))
-        color = colors[i % len(colors)]
-        cv.rectangle(overlay, (x, y), (x + w, y + h), color, 1)
-        cv.circle(overlay, (cx, cy), 3, color, -1)
-        cv.putText(
-            overlay,
-            str(i),
-            (x, y - 2),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            color,
-            1,
-            cv.LINE_AA,
-        )
-
-    return overlay
-
-
 def _draw_filtered_components(mask: MatLike, filtered_info: list[dict]) -> MatLike:
     overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
 
@@ -226,33 +186,6 @@ def _draw_filtered_components(mask: MatLike, filtered_info: list[dict]) -> MatLi
             1,
             cv.LINE_AA,
         )
-
-    return overlay
-
-
-def _draw_merge_comparison(
-    mask: MatLike, centers_before: list, centers_after: list
-) -> MatLike:
-    overlay = cv.cvtColor(cv.bitwise_not(mask), cv.COLOR_GRAY2BGR)
-
-    for cx, cy in centers_before:
-        cv.circle(overlay, (cx, cy), 4, (255, 0, 0), 1)
-        cv.circle(overlay, (cx, cy), 2, (255, 0, 0), -1)
-
-    for cx, cy, count in centers_after:
-        cv.circle(overlay, (cx, cy), 5, (0, 200, 0), 2)
-        cv.circle(overlay, (cx, cy), 3, (0, 200, 0), -1)
-        if count > 1:
-            cv.putText(
-                overlay,
-                f"x{count}",
-                (cx + 6, cy - 6),
-                cv.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (0, 200, 0),
-                1,
-                cv.LINE_AA,
-            )
 
     return overlay
 
@@ -301,17 +234,13 @@ def save_notes_visualization(
         )
 
     morph_dir = artifacts.ensure_subdir(artifacts.sections.notes, "02_morphological")
-    cc_dir = artifacts.ensure_subdir(
-        artifacts.sections.notes, "03_connected_components"
-    )
     filter_dir = artifacts.ensure_subdir(
-        artifacts.sections.notes, "04_geometric_filtering"
+        artifacts.sections.notes, "03_geometric_filtering"
     )
-    merge_dir = artifacts.ensure_subdir(artifacts.sections.notes, "05_merge_comparison")
-    stem_dir = artifacts.ensure_subdir(artifacts.sections.notes, "06_stem_augmentation")
-    final_dir = artifacts.ensure_subdir(artifacts.sections.notes, "07_final_notes")
+    stem_dir = artifacts.ensure_subdir(artifacts.sections.notes, "04_stem_augmentation")
+    final_dir = artifacts.ensure_subdir(artifacts.sections.notes, "05_final_notes")
 
-    for staff_idx, staff in enumerate(score.staffs):
+    for staff_idx, _ in enumerate(score.staffs):
         for measure_idx, measure in enumerate(score.get_measures_for_staff(staff_idx)):
             if measure.crop is None:
                 continue
@@ -323,43 +252,17 @@ def save_notes_visualization(
             )
             prefix = f"staff_{staff_idx}_measure_{measure_idx}"
 
-            if intermediates and "opened_mask" in intermediates:
-                cv.imwrite(
-                    str(morph_dir / f"{prefix}_opened.jpg"),
-                    cv.bitwise_not(intermediates["opened_mask"]),
-                )
             if intermediates and "notehead_mask" in intermediates:
                 cv.imwrite(
                     str(morph_dir / f"{prefix}_notehead.jpg"),
                     cv.bitwise_not(intermediates["notehead_mask"]),
                 )
 
-            if intermediates and "connected_components" in intermediates:
-                cc_data = intermediates["connected_components"]
-                cc_overlay = _draw_connected_components(
-                    mask, cc_data["count"], cc_data["stats"], cc_data["centroids"]
-                )
-                cv.imwrite(str(cc_dir / f"{prefix}.jpg"), cc_overlay)
-
             if intermediates and "filtered_components" in intermediates:
                 cv.imwrite(
                     str(filter_dir / f"{prefix}.jpg"),
                     _draw_filtered_components(
                         mask, intermediates["filtered_components"]
-                    ),
-                )
-
-            if (
-                intermediates
-                and "raw_centers_before_merge" in intermediates
-                and "centers_after_merge" in intermediates
-            ):
-                cv.imwrite(
-                    str(merge_dir / f"{prefix}.jpg"),
-                    _draw_merge_comparison(
-                        mask,
-                        intermediates["raw_centers_before_merge"],
-                        intermediates["centers_after_merge"],
                     ),
                 )
 
@@ -382,14 +285,12 @@ def save_notes_visualization(
             )
 
     paths["02_morphological"] = morph_dir
-    paths["03_connected_components"] = cc_dir
-    paths["04_geometric_filtering"] = filter_dir
-    paths["05_merge_comparison"] = merge_dir
-    paths["06_stem_augmentation"] = stem_dir
-    paths["07_final_notes"] = final_dir
-    paths["08_full_notes_overlay"] = artifacts.write_image(
+    paths["03_geometric_filtering"] = filter_dir
+    paths["04_stem_augmentation"] = stem_dir
+    paths["05_final_notes"] = final_dir
+    paths["06_full_notes_overlay"] = artifacts.write_image(
         artifacts.sections.notes,
-        "08_full_notes_overlay.jpg",
+        "06_full_notes_overlay.jpg",
         _draw_full_notes_overlay(score),
     )
 

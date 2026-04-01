@@ -131,7 +131,6 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     )
     measure_crops = crop_measures(
         measures_map=measures_map,
-        staffs=staffs,
         notes_image=notes_mask,
     )
     save_measure_visualization(
@@ -151,11 +150,8 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         bars=bars,
         clefs_by_staff=clefs_by_staff,
         clef_detections=clef_detections,
-        clef_key_crops=clef_key_crops,
         measures_map=measures_map,
         measure_crops=measure_crops,
-        notes_mask=notes_mask,
-        bars_mask=bars_mask,
     )
     if header_accidentals and 0 in score.clefs:
         score.clefs[0].key_header_glyphs = header_accidentals

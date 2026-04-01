@@ -145,7 +145,6 @@ def _split_staff(
 
 def crop_measures(
     measures_map: dict[int, list[Measure]],
-    staffs: list,
     notes_image: MatLike,
 ) -> dict[int, list[MatLike]]:
     crops = {}

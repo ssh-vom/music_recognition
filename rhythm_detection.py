@@ -6,11 +6,6 @@ from cv2.typing import MatLike
 
 from schema import Note, Staff
 
-COMPACT_GAP_MIN_FRAC = 1.2
-COMPACT_GAP_MAX_FRAC = 3.6
-COMPACT_RUN_MIN_EVENTS = 4
-
-
 def refine_beamed_durations(
     mask: MatLike, notes: list[Note], staff: Staff
 ) -> list[Note]:

@@ -17,7 +17,6 @@ _FLAT_TEMPLATE = None
 MATCH_THRESHOLD = 0.5
 SCALE_FRACTIONS = (0.35, 0.5, 0.65, 0.8)
 MIN_PEAK_DISTANCE_FRAC = 0.55
-NOTEHEAD_CLEARANCE_FRAC = 0.22
 
 
 def _load_templates() -> tuple[MatLike, MatLike]:
@@ -73,14 +72,6 @@ def detect_key_signature_accidentals(
     ]
     accidentals.sort(key=lambda a: (a.center_x, a.kind))
     return accidentals
-
-
-def _exclusive_x_before_first_note(staff, detected_notes) -> int | None:
-    if not detected_notes:
-        return None
-    first_x = min(n.center_x for n in detected_notes)
-    end = first_x - max(1, int(round(staff.spacing * NOTEHEAD_CLEARANCE_FRAC)))
-    return end if end >= 4 else None
 
 
 def _match_templates_in_roi(roi: MatLike, spacing: float) -> list[tuple]:

@@ -69,7 +69,6 @@ def find_notes(
     secondary_mask = _create_secondary_mask(mask)
 
     intermediates["notehead_mask"] = notehead_mask.copy()
-    intermediates["secondary_mask"] = secondary_mask.copy()
 
     components = cv.connectedComponentsWithStats(notehead_mask, connectivity=8)
     secondary = cv.connectedComponentsWithStats(secondary_mask, connectivity=8)
@@ -90,7 +89,6 @@ def find_notes(
     notes = _resolve_notes(centers, mask, staff, measure, measure_index)
     notes = _merge_duplicate_detections(notes, staff.spacing, mask)
 
-    intermediates["final_notes"] = notes
     return notes, intermediates
 
 
@@ -142,7 +140,6 @@ def _filter_notehead_candidates(
         if area <= tiny_area and valid_area:
             refined = _refine_tiny_center(
                 cx,
-                cy,
                 s_count,
                 s_stats,
                 s_centroids,
@@ -174,12 +171,11 @@ def _filter_notehead_candidates(
             )
 
     intermediates["filtered_components"] = filtered_log
-    intermediates["raw_centers"] = centers.copy()
 
     return centers
 
 
-def _refine_tiny_center(cx, cy, count, stats, centroids, spacing, max_x, max_y):
+def _refine_tiny_center(cx, count, stats, centroids, spacing, max_x, max_y):
     tolerance = max(2, int(round(spacing * 0.95)))
     min_height = max(6, int(round(spacing * 2.0)))
     min_area = spacing * spacing * 0.30
@@ -246,8 +242,6 @@ def _add_stem_centers(
     intermediates: dict | None,
 ) -> list[list]:
     if len(centers) > 2:
-        if intermediates is not None:
-            intermediates["stem_augmentation_skipped"] = "too_many_notes"
         return centers
 
     count, _, stats, _ = cv.connectedComponentsWithStats(mask, connectivity=8)

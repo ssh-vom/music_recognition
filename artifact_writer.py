@@ -1,4 +1,3 @@
-from datetime import datetime
 from pathlib import Path
 
 import cv2 as cv
@@ -13,7 +12,6 @@ class _Sections:
     export = "06_export"
     logs = "07_logs"
     pipeline = "08_pipeline"
-    combined = "09_combined"
 
 
 class ArtifactWriter:

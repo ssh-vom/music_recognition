@@ -16,7 +16,7 @@ after we have cropped the measures separately.
 
 from cv2.typing import MatLike
 
-from schema import BarLine, Clef, ClefDetection, Measure, Note, Score, Staff
+from schema import BarLine, Clef, ClefDetection, Measure, Score, Staff
 
 
 def build_score(
@@ -27,11 +27,8 @@ def build_score(
     bars: list[BarLine],
     clefs_by_staff: dict[int, Clef],
     clef_detections: dict[int, ClefDetection],
-    clef_key_crops: dict[int, MatLike],
     measures_map: dict[int, list[Measure]],
     measure_crops: dict[int, list[MatLike]],
-    notes_mask: MatLike,
-    bars_mask: MatLike,
 ) -> Score:
     bars_by_staff: dict[int, list[BarLine]] = {i: [] for i in range(len(staffs))}
     for bar in bars:
@@ -57,21 +54,15 @@ def build_score(
             if measure_index < len(closing_bars):
                 measure.closing_bar = closing_bars[measure_index]
 
-    all_notes: list[Note] = []
-    for measure in all_measures:
-        all_notes.extend(measure.notes)
-
     return Score(
         image_path=image_path,
         sheet_image=sheet_image,
         staffs=staffs,
         measures=all_measures,
         bars=bars,
-        notes=all_notes,
+        notes=[],
         clefs=clefs_by_staff,
         clef_detections=clef_detections,
-        notes_mask=notes_mask,
-        bars_mask=bars_mask,
     )
 
 
