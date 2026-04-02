@@ -2,7 +2,12 @@
 #import "@preview/codly:1.3.0": *
 #import "@preview/codly-languages:0.1.1": *
 #show: codly-init.with()
-#set page(paper: "us-letter", margin: (top: 1in, bottom: 1in, left: 1in, right: 1in))
+#set page(
+  paper: "us-letter",
+  margin: (top: 1in, bottom: 1in, left: 1in, right: 1in),
+  numbering: "1",
+  number-align: center + bottom,
+)
 #set text(font: "Times New Roman", size: 12pt)
 // #set par(justify: true, linebreaks: "optimized", leading: 1.5em)
 
@@ -21,6 +26,19 @@
 
 #let sheet_figures(folder_name, display_name, first_sheet: false) = [
   === Staff Detection Images - #display_name
+
+  #if first_sheet [
+    #figure(
+      image("../methodology_figures/01_staff_line_kernel.jpg", width: 55%),
+      caption: [
+        Horizontal staff-line kernel used for morphological opening. The wide
+        rectangle preserves long horizontal staff lines while suppressing narrower
+        symbols.
+      ],
+    ) <fig:staffline-kernel>
+
+    #v(1em)
+  ]
 
   #grid(
     columns: (1fr, 1fr),
@@ -107,7 +125,7 @@
       ]
     ],
   )
-
+  #pagebreak()
   == Staff Removal Images - #display_name
   #if first_sheet [
     #figure(
@@ -176,7 +194,20 @@
 
   #v(1em)
 
+  #pagebreak()
   == Bar Line Detection Images - #display_name
+  #if first_sheet [
+    #figure(
+      image("../methodology_figures/03_bar_line_kernel.jpg", width: 55%),
+      caption: [
+        Vertical bar-line kernel used for morphological close. The tall rectangle
+        reconnects fragmented vertical ink into solid bar candidates.
+      ],
+    ) <fig:barline-kernel>
+
+    #v(1em)
+  ]
+
   #grid(
     columns: (1fr, 1fr),
     gutter: 1em,
@@ -263,30 +294,79 @@
       ]
     ],
   )
+
   #v(1em)
+
+  #if first_sheet [
+  #pagebreak()
+    == Notehead Detection Images - #display_name
+
+    #grid(
+      columns: (1fr, 1fr),
+      gutter: 1em,
+      [
+        #figure(
+          image("../methodology_figures/02_notehead_kernel.jpg", width: 100%),
+          caption: [
+            Elliptical notehead kernel used for morphological opening. Its
+            diameter is scaled relative to staff spacing.
+          ],
+        ) <fig:twinkle-notehead-kernel>
+      ],
+      [
+        #figure(
+          image("../artifacts/" + folder_name + "/04_notes/02_morphological/staff_0_measure_0_notehead.jpg", width: 100%),
+          caption: [
+            Morphological opening result for #display_name on staff 0, measure 0.
+            Filled elliptical notehead blobs remain while stems and residue are suppressed.
+          ],
+        ) <fig:twinkle-morph-open>
+      ],
+    )
+
+    #v(1em)
+
+    #figure(
+      image("../artifacts/" + folder_name + "/04_notes/03_geometric_filtering/staff_0_measure_0.jpg", width: 70%),
+      caption: [
+        Geometric filtering result for #display_name on the same measure. Area,
+        size, and aspect-ratio thresholds retain only plausible noteheads.
+      ],
+    ) <fig:twinkle-geometric-filter>
+
+    #v(1em)
+  ]
+]
+
+#let detection_comparison(sheet_file, folder_name, caption_body) = [
+  #figure(
+    grid(
+      columns: (1fr, 1fr),
+      gutter: 1em,
+      [image("../music_sheets/" + sheet_file + ".png", width: 100%)],
+      [image("../artifacts/" + folder_name + "/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+    ),
+    caption: caption_body,
+  )
 ]
 
 
 #align(center + top)[
   #v(2in)
   
-  #text(size: 18pt, weight: "bold")[Music Recognition]
+  #text(size: 16pt)[Sheet Music Player Project]
   #v(0.5em)
-  #text(size: 14pt)[Music Recognition using Morphology]
-  
-  #v(1.5in)
-  
-  #text(size: 12pt)[Course Number: 4TN4]
-  
-  #v(1em)
-  
+  #text(size: 18pt, weight: "bold")[Optical Music Recognition via Morphology] \  \
+
   #text(size: 12pt)[Daniel Young],
   #text(size: 12pt)[Joseph Petrasek],
   #text(size: 12pt)[Shivom Sharma]
+  #v(1.0em)
   
-  #v(1em)
+  #text(size: 12pt)[COMPENG 4TN4 - Image Processing]
   
-  #text(size: 12pt)[Date: April 2nd, 2026]
+  
+  #text(size: 12pt)[Date: April 3rd, 2026]
   
   #v(1.5in)
 ]
@@ -315,6 +395,202 @@
 #pagebreak()
 
 = Technical Discussion
+
+
+The pipeline consists of 8 key steps:
+
+#figure(
+  image("assets/Pipeline_Steps.png", width: 80%),
+  caption: [Steps of the Pipeline],
+  supplement: [Figure],
+) <fig-pipeline_steps>
+
+
+=== Staff Line Detection:
+We start by converting the input image to grayscale and binarizing using otsu's (@fig:twinkle-otsu).
+We then perform opening with a horizontal morphological kernel of size ($W times 1$) shown in (@fig:staffline-kernel) and parameterized by (@eq:kernel-dimensions).
+Staff lines are horizontal and wide enough to pass through this kernel, the other features are suppresssed (@fig:twinkle-staff-lines-only)
+These lines share a common spacing size $S$ (@fig:twinkle-staff-overlay), which we use for further note/rhythm detection.
+
+
+=== Staff Line Removal:
+To remove the lines for use in note extraction and other analysis, we used an adaptive threshold to binarize the image, and take into account local illumination. Then we used horizontal opening and subtract from the created mask, within a band around the staff spacing ($plus.minus 0.2 S$) around each staff line. This avoids breaking the notehead when it overlaps with the staff line. We then perform closing using a small vertical kernel ($1 times K$) where $K in [3,7]$, it fills in the gaps left by the subtraction. We perform this operation twice, once targeting notes (@fig:twinkle-staff-removal-notes) and once for vertical bars (@fig:twinkle-staff-removal-bars)
+
+=== Bar Line and Clef Detection
+Bar lines are discovered by running a `find_bars()` over the bars mask. A tall vertical morphological close with the kernel shown in (@fig:barline-kernel) reconnects fragmented vertical ink into solid bar candidates (@fig:twinkle-bar-vertical-close). Vertical components spanning most of the staff's height and falling within the width limits of the kernel are then classified as bar lines, producing the final overlay shown in (@fig:twinkle-bar-overlay). In this stage we also look to the right and left of a located bar, observing for top and bottom dots indicating whether we must repeat a section of the staff. Their x positions were stored and used to split measures.
+
+Clef detection was done using template matching in `clef_detection.py`. A small region on the left side of each staff is cropped, and the treble and bass templates shown in (@fig:clef-templates) are compared against that crop using normalized cross-correlation. We can view one example of a clef assignment as follows: (@fig:twinkle-clef-overlay).
+
+#pagebreak()
+=== Key Signature and Time Signature Detection
+Key signature detection looks at the region between the clef and the first bar lnie. In `accidental_detection.py`, connected components are extracted and classified as sharps or flats based on their shape, using a similar method of template matching. We count the number and determine the pitch based on a mapping of sharp counts or flat counts. We ensure any duplicate detections are removed before determining the signature.
+When classifying durations, we use the ratio $r$ of filled pixels in the round regions of ink, as well as whether it has a stem or beam attached. The time signature is read using Tesseract OCR. The region is split into top and bottom halves for the numerator and denominator of the signature,
+scaled up and then passed to OCR.
+
+=== Measure Splitting and Score Trees
+Bar line positions are used in `measure_splitting.py` to divide each staff into measures. A small offset is applied so the clef and key signature are not included in the first measure. The detected elements are assembled into a structured format in `schema.py` through the `build_score()` helper. The schema defines `Score`, `Staff`, `Measure`, `BarLine`, `Clef`, and `Note` objects, and this structure is used by the later pitch, rhythm, and ABC export stages.
+
+
+=== Note Detection, Rhythm and Pitch Mapping
+Notes are detected in `note_detection.py` using blob detection on the notes mask. An elliptical morphological opening with the kernel shown in (@fig:twinkle-notehead-kernel) isolates candidate notehead blobs; a sample intermediate result is shown in (@fig:twinkle-morph-open). Blobs are then filtered based on size and shape using thresholds based on staff spacing, as shown in (@fig:twinkle-geometric-filter). Each detected note head is mapping to a pitch by comparing it's vertical position to the staff lines, 
+this position gets converted into a step value, and the key signature is applied to adjust for accidentals. Rhythm is estimated within `rhythm_detection.py` by looking for beams connected to note stems, we then use the heuristic as follows. 
+(@table:duration-classification)
+
+=== ABC Notation Export
+The final score is converted to ABC notation in `abc_export.py`. The system writes out header information (key, time signature, etc), and then outputs each note with its pitch and duration based on the metadata gathered prior.
+This file is then played on the abcjs website to test.
+
+
+#pagebreak()
+
+= Discussion of Results
+
+The analysis below will focus on the five songs that were tested with the image processing pipeline, then speaking to the overall success in terms of the project's objectives:
+
+=== Twinkle Twinkle Little Star (Key C, 4/4)
+All notes across three staffs were detected with high to medium confidence, and arrived at the correct ABC output. We can see this detailed in Figures @fig:twinkle-comparison and @fig:ttls_abc_js. The clef was determined correctly, and correct durations were found for each note. We were able to cleanly extract the correct 4/4 time signature, and each measure contained the proper amount of expected notes when split.
+
+=== Mary Had a Little Lamb (Key F, 4/4)
+Mary Had a Little Lamb correctly preserved the melody and also correctly identified the one-flat key signature. The side-by-side comparison in @fig:mary-comparison shows a clean final overlay with the expected note structure, while the ABC rendering is shown in Figure @fig:mary_had_a_little_lamb_output_abc_js.
+
+=== Frere Jacques (Key C, 4/4)
+Frere Jacques preserved the expected stepwise melodic motion. As shown in @fig:frere-comparison, the repeated C-D-E-C phrase is tracked cleanly, although some beamed passages introduce small note-count errors. The final ABC rendering is shown in @fig:frere_jacques_abc_js.
+
+=== Sailors' Hornpipe (Key G, 4/4)
+Sailors' Hornpipe was more complex, but still preserved the overall pitch contour. @fig:sailors-comparison shows that most simpler measures are handled well, while denser passages begin to reveal beam-related false positives. The final ABC rendering is shown in @fig:sailors_abc_js.
+
+=== Boys of 45 Reel (Key D, 4/4)
+The Boys of 45 Reel illustrates the main failure mode of the system. In @fig:reel-comparison, beam fragments are misclassified as high-pitch noteheads, leading to repeated false positives in dense eighth-note passages. The degraded final ABC rendering is shown in @fig:boys_of_the_reel_abc_js.
+
+
+#pagebreak()
+
+
+=== Staff Detection and Bar Detection
+Staff detection worked on every song, and the kernel choice and parameters were capable of extracting the spacings consistently, as illustrated by @fig:twinkle-staff-lines-only and @fig:twinkle-staff-overlay. Similarly, bar detection worked on each song; based on the closing operations performed in @fig:twinkle-bar-vertical-close, we were able to consistently find single bars, double bars, begin-repeats and end-repeats in overlays such as @fig:twinkle-bar-overlay.
+=== Clef and Key Signature Detection
+Clef detection was correct in all five songs, showing that template matching was robust enough for the task, likely due to the unique shapes of each of these components, as shown by the templates in @fig:clef-templates and the sample detection in @fig:twinkle-clef-overlay. Accidental detection correctly counted accidentals for four out of five of the songs, which aligns with the cleaner outputs in @fig:mary-comparison and @fig:sailors-comparison, beginning to fall apart on the most complex piece test _The Boys of 45 Reel_ as seen in @fig:reel-comparison. This was likely due to tight spacing causing merged accidentals.
+=== Note Detection and Pitch Assignment
+Note detection correctly produced accurate center positions for quarter and half notes when sheets were uncluttered, such as in _Twinkle Twinkle Little Star_, _Mary Had a Little Lamb_ and _Frere Jacques_, as reflected in @fig:twinkle-morph-open, @fig:twinkle-geometric-filter, @fig:twinkle-comparison, and @fig:mary-comparison. Notes going across ledger lines (both above and below) worked in implementation.
+The beam counting approach worked successfully on _Frere Jacques_, and partially on _Sailors' Hornpipe_, as seen in @fig:frere-comparison and @fig:sailors-comparison, but was not robust enough to function when the sheet became largely crowded, which is most apparent in @fig:reel-comparison.
+=== ABC Output and Audio Playback
+The ABC files that were generated by the pipeline were valid and playable using the abcjs website. This process was deterministic, and worked on all songs we tested with; representative outputs are shown in @fig:ttls_abc_js, @fig:mary_had_a_little_lamb_output_abc_js, @fig:frere_jacques_abc_js, @fig:sailors_abc_js, and @fig:boys_of_the_reel_abc_js.
+= Takeaways
+Overall, when analyzing the image processing pipeline as a whole, it was able to correctly play three out of five of the songs tested using pure
+morphology and connected-component analysis. This is reflected most clearly by the strong matches in @fig:twinkle-comparison,
+@fig:mary-comparison, and @fig:frere-comparison, which show that the pipeline is robust on simpler monophonic songs with sparse note
+placement. It begins to fall apart when confronted with crowded music such as _The Boys of 45 Reel_, as shown in @fig:reel-comparison. When
+comparing this to the project's overall objectives, we would still call this a success, since without the use of a complex
+neural-network-based design, and relying only on kernel-based morphology and connected components, the system was able to consistently
+produce correct results on simple songs. In the future, a larger dataset of templated symbols could help improve detection in crowded sheets
+rather than relying primarily on region growing with thresholding.
+
+
+#pagebreak()
+
+= Results
+
+// Generate all pipeline figures for each sheet music piece
+#sheet_figures("twinkle_twinkle_little_star", "Twinkle Twinkle Little Star", first_sheet: true)
+#pagebreak()
+#sheet_figures("mary_had_a_little_lamb", "Mary Had a Little Lamb")
+#pagebreak()
+#sheet_figures("frere-jacques", "Frere Jacques")
+#pagebreak()
+#sheet_figures("sailors-hornpipe", "Sailors' Hornpipe")
+#pagebreak()
+#sheet_figures("boys-of-45-reel-the", "The Boys of 45 Reel")
+
+
+
+#pagebreak()
+#figure(
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [#image("../music_sheets/twinkle_twinkle_little_star.png", width: 100%)],
+    [#image("../artifacts/twinkle_twinkle_little_star/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+  ),
+  caption: [
+    Input sheet music and final detection overlay for Twinkle Twinkle Little Star. All 40 notes across three staves were detected with predominantly high or medium confidence, and the recovered melody matches the expected phrase structure exactly.
+  ],
+) <fig:twinkle-comparison>
+
+#figure(
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [#image("../music_sheets/mary_had_a_little_lamb.png", width: 100%)],
+    [#image("../artifacts/mary_had_a_little_lamb/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+  ),
+  caption: [
+    Input sheet music and final detection overlay for Mary Had a Little Lamb. The key-signature flat was detected at confidence 0.850 and mapped correctly to F major, and the final whole note is classified correctly.
+  ],
+) <fig:mary-comparison>
+
+#figure(
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [#image("../music_sheets/frere-jacques.png", width: 100%)],
+    [#image("../artifacts/frere-jacques/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+  ),
+  caption: [
+    Input sheet music and final detection overlay for Frere Jacques. The main stepwise melodic contour is preserved, though minor false detections appear in some beamed passages.
+  ],
+) <fig:frere-comparison>
+
+#figure(
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [#image("../music_sheets/sailors-hornpipe.png", width: 100%)],
+    [#image("../artifacts/sailors-hornpipe/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+  ),
+  caption: [
+    Input sheet music and final detection overlay for Sailors' Hornpipe. Key G was detected correctly with an F-sharp confidence of 0.900, and most measures preserve the correct melodic contour despite a few denser beam-related errors.
+  ],
+) <fig:sailors-comparison>
+
+#figure(
+  grid(
+    columns: (1fr, 1fr),
+    gutter: 1em,
+    [#image("../music_sheets/boys-of-45-reel-the.png", width: 100%)],
+    [#image("../artifacts/boys-of-45-reel-the/04_notes/06_full_notes_overlay.jpg", width: 100%)],
+  ),
+  caption: [
+    Input sheet music and final detection overlay for The Boys of 45 Reel. Dense beamed passages generate systematic false positives, visible as extra high-pitch labels above the staff where beam fragments are mistaken for noteheads.
+  ],
+) <fig:reel-comparison>
+#pagebreak()
+
+#figure(
+  image("assets/mary_had_a_little_lamb_output_abc_js.png", width: 80%),
+  caption: [Mary had a little lamb output on abcjs],
+) <fig:mary_had_a_little_lamb_output_abc_js>
+
+#figure(
+  image("assets/frere_jacques_abc_js.png", width: 80%),
+  caption: [Frere Jacques output on abcjs],
+) <fig:frere_jacques_abc_js>
+
+#figure(
+  image("assets/ttls_abc_js.png", width: 80%),
+  caption: [Twinkle Twinkle Little Star output on abcjs],
+) <fig:ttls_abc_js>
+
+#figure(
+  image("assets/sailors_abc_js.png", width: 80%),
+  caption: [Sailors' Hornpipe output on abcjs],
+) <fig:sailors_abc_js>
+
+#figure(
+  image("assets/boys_of_the_reel_abc_js.png", width: 80%),
+  caption: [Boys of 45 Reel output on abcjs],
+) <fig:boys_of_the_reel_abc_js>
+#pagebreak()
+= Appendix
 
 == Principal Equations
 
@@ -367,116 +643,23 @@ Where $y_"bottom"$ is the y-coordinate of the lowest staff line, $y_"note"$ is t
   ) <table:duration-classification> 
 ]
 
-The pipeline consists of 8 key steps:
-
-#figure(
-  image("assets/Pipeline_Steps.png", width: 80%),
-  caption: [Steps of the Pipeline],
-  supplement: [Figure],
-) <fig-pipeline_steps>
-
-
-=== Staff Line Detection:
-We start by converting the input image to grayscale and binarzing using otsu's (@fig:twinkle-otsu).
-We then perform opening with a horizontal morphological kernel of size ($W times 1$) (@eq:kernel-dimensions).
-Staff lines are horizontal and wide enough to pass through this kernel, the other features are suppresssed (@fig:twinkle-staff-lines-only)
-These lines share a common spacing size $S$ (@fig:twinkle-staff-overlay), which we use for further note/rhythm detection.
-
-
-=== Staff Line Removal:
-To remove the lines for use in note extraction and other analysis, we used an adaptive threshold to binarize the image, and take into account local illumination. Then we use horizontal opening and subtract from the created mask, within a band around the staff spacing ($plus.minus 0.2 S$) around each staff line. This avoids breaking the notehead when it overlaps with the staff line. We then perform closing using a small vertical kernel ($1 times K$) where $K in [3,7]$, it fills in the gaps left by the subtraction. We perform this operation twice, once targeting notes (@fig:twinkle-staff-removal-notes) and once for vertical bars (@fig:twinkle-staff-removal-bars)
-
-=== Bar Line and Clef Detection
-Bar lines are dsicovered by running a `find_bars()` over the bars mask. A tall vertical morphological close reconnects fragmented vertical ink into solid bar candidates (@fig:twinkle-bar-vertical-close). Vertical components spanning most of the staff's height and falling within the width limits of the kernel are then classified as bar lines, producing the final overlay shown in (@fig:twinkle-bar-overlay). In this stage we also look to the right and left of a located bar, observing for top and bottom dots indicating whether we must repeat a section of the staff. Their x position is stored and used to split measures.
-
-Clef detection is done using template matching in `clef_detection.py`. A small region on the left side of each staff is cropped, and the treble and bass templates shown in (@fig:clef-templates) are compared against that crop using normalized cross-correlation. The final staff-wise clef assignments for Twinkle are shown in (@fig:twinkle-clef-overlay).
-
-=== Key Signature and Time Signature Detection
-Key signature detection looks at the region between the clef and the first bar lnie. In `accidental_detection.py`, connected components are extracted and classified as sharps or flats based on their shape, using a similar method of template matching. We count the number and determine the pitch based on a mapping of sharp counts or flat counts. We ensure any duplicate detections are removed before determining the signature.
-When classifying durations, we use the ratio $r$ of filled pixels in the round regions of ink, as well as whether it has a stem or beam attached. The time signature is read using Tesseract OCR. The region is split into top and bottom halves for the numerator and denominator of the signature,
-scaled up and then passed to OCR.
-
-=== Measure Splitting and Score Trees
-Bar line positions are used in `measure_splitting.py` to divide each staff into measures. A small offset is applied so the clef and key signature are not included in the first measure. The detected elements are 
-assembled into a structured format in `score_tree.py`. A Score contains multiple Staff objects, each with its own measures and clef. This structure is used by all the later stages.
-
-
-=== Note Detection, Rhythm and Pitch Mapping
-Notes are detected in `note_detection.py` using blob detection on the notes mask. Blobs are filtered based on size and shape using thresholds based on staff spacing. Each detected note head is mapping to a pitch by comparing it's vertical position to the staff lines, 
-this position gets converted into a step value, and the key signature is applied to adjust for accidentals. Rhythm is estimated within `rhythm_detection.py` by looking for beams connected to note stems, we then use the heuristic as follows. 
-(@table:duration-classification)
-
-=== ABC Notation Export
-The final score is converted to ABC notation in `abc_export.py`. The system writes out header information (key, time signature, etc), and then outputs each note with its pitch and duration based on the metadata gathered prior.
-This file is then played on the abcjs website to test.
-
-
-
-== Implementation Details
-
-#pagebreak()
-
-= Discussion of Results
-
-== Major Findings
-
-== Analysis
-
-#pagebreak()
-
-= Results
-
-// Generate all pipeline figures for each sheet music piece
-#sheet_figures("twinkle_twinkle_little_star", "Twinkle Twinkle Little Star", first_sheet: true)
-#pagebreak()
-#sheet_figures("mary_had_a_little_lamb", "Mary Had a Little Lamb")
-#pagebreak()
-#sheet_figures("frere-jacques", "Frere Jacques")
-#pagebreak()
-#sheet_figures("sailors-hornpipe", "Sailors' Hornpipe")
-#pagebreak()
-#sheet_figures("boys-of-45-reel-the", "The Boys of 45 Reel")
-
-#pagebreak()
-
-#v(0.5em)
-#pagebreak()
-#figure(
-  image("assets/mary_had_a_little_lamb_output_abc_js.png", width: 80%),
-  caption: [Mary had a little lamb output on abcjs],
-) <fig-mary_had_a_little_lamb_output_abc_js>
-
-#figure(
-  image("assets/frere_jacques_abc_js.png", width: 80%),
-  caption: [Frere Jacques output on abcjs],
-) <fig-frere_jacques_abc_js>
-
-#figure(
-  image("assets/ttls_abc_js.png", width: 80%),
-  caption: [Twinkle Twinkle Little Star output on abcjs],
-) <fig-ttls_abc_js>
-
-#figure(
-  image("assets/sailors_abc_js.png", width: 80%),
-  caption: [Sailors' Hornpipe output on abcjs],
-) <fig-sailors_abc_js>
-
-#figure(
-  image("assets/boys_of_the_reel_abc_js.png", width: 80%),
-  caption: [Boys of 45 Reel output on abcjs],
-) <fig-boys_of_the_reel_abc_js>
-= Appendix
-
 
 == Acknowledgments
 
+The code for this project is fully available on GitHub: #link("https://github.com/ssh-vom/music_recognition")["https://github.com/ssh-vom/music_recognition"], 
+the code shown in the _Program Listings_ section is a simplified version removing most of the visualizations, and giving the key algorithms.
+The libraries used within the code was as follows:
+- OpenCV: for morphology, connected component analysis, template matching and loading/saving of images.
+- pytessertact / Tesseract OCR: Digit recognition for time signature extraction
+- ABC notation standard: we referenced #link("https://wwww.abcnotation.com")["https://www.abcnotation.com"]
+- NumPy: For array operations 
+- Matplotlib: visualization of intermediate detections 
+
 == Program Listings
 
-The code for this project is fully available on GitHub: #link("https://github.com/ssh-vom/music_recognition")["https://github.com/ssh-vom/music_recognition"], 
-the code below is a simplified version of the larger codebase.
 
 
-=== `abc\_export.py` - ABC Notation Generation
+=== `abc_export.py` - ABC Notation Generation
 #set text(size: 6.5pt)
 #set par(leading: 0.4em)
 #set raw(tab-size: 2)
@@ -711,6 +894,72 @@ def main():
     image_paths = sorted(music_dir.glob("*.png"))
     for image_path in image_paths:
         run_pipeline(str(image_path), show_windows=False)
+```
+
+
+#set text(font: "Times New Roman", size: 12pt)
+=== `schema.py` - Score Tree Schema
+#set text(size: 6.5pt)
+#set par(leading: 0.4em)
+#set raw(tab-size: 2)
+```python
+@dataclass
+class Measure:
+    x_start: int
+    x_end: int
+    y_top: int
+    y_bottom: int
+    staff_index: int
+    notes: list["Note"] = field(default_factory=list)
+    closing_bar: "BarLine | None" = None
+    crop: MatLike | None = None
+
+@dataclass
+class Clef:
+    staff_index: int
+    kind: ClefKind | None
+    x_start: int
+    x_end: int
+    y_top: int
+    y_bottom: int
+    key_signature: KeySignature
+    time_signature: TimeSignature
+    key_header_glyphs: list["Accidental"] = field(default_factory=list)
+
+@dataclass
+class Note:
+    kind: NoteKind
+    staff_index: int
+    measure_index: int
+    center_x: int
+    center_y: int
+    step: int
+    step_confidence: StepConfidence | None = None
+    pitch_letter: str | None = None
+    octave: int | None = None
+    duration_class: DurationClass | None = None
+
+@dataclass
+class Score:
+    image_path: str
+    sheet_image: MatLike
+    staffs: list[Staff]
+    measures: list[Measure]
+    bars: list[BarLine]
+    notes: list[Note]
+    clefs: dict[int, Clef]
+    clef_detections: dict[int, ClefDetection]
+
+    def get_measures_for_staff(self, staff_index: int) -> list[Measure]:
+        return [m for m in self.measures if m.staff_index == staff_index]
+
+def build_score(*, image_path: str, sheet_image: MatLike, staffs: list[Staff],
+                bars: list[BarLine], clefs_by_staff: dict[int, Clef],
+                clef_detections: dict[int, ClefDetection],
+                measures_map: dict[int, list[Measure]],
+                measure_crops: dict[int, list[MatLike]]) -> Score:
+    # attaches crops + closing bars, then returns one flat Score object
+    ...
 ```
 
 
