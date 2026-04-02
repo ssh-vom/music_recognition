@@ -41,6 +41,7 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     staff_h = y1 - y0
     roi = image[y0:y1, :]
 
+    # the first staff has clef + key + time signature on the left; later staves only repeat the clef
     skip_mult = (
         BAR_SEARCH_LEFT_SKIP_FRAC if staff_idx == 0 else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC
     )
@@ -50,6 +51,7 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     if work.size == 0:
         return []
 
+    # vertical close kernel reconnects bar line segments that were broken by staff line erasure
     kernel_h = max(
         BAR_CLOSE_KERNEL_MIN, int(round(BAR_CLOSE_KERNEL_HEIGHT_FRAC * staff.spacing))
     )
@@ -94,6 +96,7 @@ def _contours_to_bars(
         area = w * h
         if area == 0:
             continue
+        # density filters out sparse blobs — real bar lines fill almost their entire bounding box
         density = cv.contourArea(contour) / float(area)
 
         abs_left = left_skip + x
@@ -102,12 +105,14 @@ def _contours_to_bars(
 
         near_right = abs_center >= staff_right - right_margin
         near_left = abs_center <= left_skip + left_margin
+        # blobs near the left edge can be thicker due to clef artifacts, so we relax the width limit there
         left_relaxed = near_left and w <= left_relaxed_max and density >= 0.50
         if not left_relaxed and (
             density < BAR_MIN_DENSITY or (w > max_width and density < 0.75)
         ):
             continue
 
+        # a wide blob near the right edge is a double bar; split it into left and right strokes
         kind_xs = (
             [("double_left", abs_left), ("double_right", abs_right)]
             if w >= min_double_width and near_right
@@ -138,6 +143,7 @@ def _merge_and_classify_pairs(
     bars = sorted(bars, key=lambda b: b.x)
     merge_dist = max(3, int(round(BAR_MERGE_DISTANCE_FRAC * staff.spacing)))
 
+    # average together any two single bars that landed very close to each other
     merged = [bars[0]]
     for bar in bars[1:]:
         prev = merged[-1]
@@ -168,6 +174,7 @@ def _merge_and_classify_pairs(
     while i < len(merged):
         if i + 1 < len(merged):
             left, right = merged[i], merged[i + 1]
+            # two singles sitting close together near a staff edge are the two strokes of a double bar
             if (
                 left.kind == "single"
                 and right.kind == "single"
@@ -201,6 +208,7 @@ def _classify_repeat_markers(
             and right.kind == "double_right"
             and right.x - left.x <= pair_gap
         ):
+            # dots to the right of the bar = begin repeat; dots to the left = end repeat
             has_left = _has_repeat_dots_on_side(
                 roi=roi,
                 staff=staff,
@@ -288,11 +296,13 @@ def _has_repeat_dots_on_side(
     if len(candidates) < 2:
         return False
 
+    # repeat dots sit in the two spaces around the middle line of the staff — one above, one below
     top = [p for p in candidates if abs(p[1] - expected_top) <= y_tol]
     bottom = [p for p in candidates if abs(p[1] - expected_bottom) <= y_tol]
     if not top or not bottom:
         return False
 
+    # the two dots must also be vertically aligned with each other
     for tx, _ in top:
         for bx, _ in bottom:
             if abs(tx - bx) <= x_align_tol:
