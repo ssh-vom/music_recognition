@@ -31,16 +31,17 @@ def find_staffs(image: MatLike) -> tuple[list[Staff], MatLike, MatLike]:
     We return the staff lines, the binary image of extraction and the mask used
     for ease of visualiation/debugging in the report.
     """
-    gray = to_gray(image)  # convert to grayscale
-    binary = binarize(gray)  # binarize the grayscale image
-    line_mask = extract_horizontal_lines(binary)  # extract horizontal lines
-    centers = find_line_centers(line_mask)  # find the centers of the staff lines
-    staffs = group_into_staffs(centers, line_mask, binary.shape)  # group into staffs
+    gray = to_gray(image)
+    binary = binarize(gray)
+    line_mask = extract_horizontal_lines(binary)
+    centers = find_line_centers(line_mask)
+    staffs = group_into_staffs(centers, line_mask, binary.shape)
     return staffs, binary, line_mask
 
 
 def binarize(gray: MatLike) -> MatLike:
     blurred = cv.GaussianBlur(gray, BLUR_KERNEL_SIZE, 0)
+    # THRESH_BINARY_INV so ink becomes foreground (255); Otsu picks the threshold automatically
     _, binary = cv.threshold(
         blurred, MASK_BACKGROUND, MASK_FOREGROUND, cv.THRESH_BINARY_INV + cv.THRESH_OTSU
     )
@@ -53,11 +54,13 @@ def extract_horizontal_lines(binary: MatLike) -> MatLike:
         STAFF_LINE_KERNEL_MIN_WIDTH, int(image_width * STAFF_LINE_KERNEL_WIDTH_FRAC)
     )
     kernel_width = max(1, min(kernel_width, image_width))
+    # a wide horizontal open kernel removes anything shorter than kernel_width, leaving only long horizontal strokes
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (kernel_width, 1))
     return cv.morphologyEx(binary, cv.MORPH_OPEN, kernel)
 
 
 def find_line_centers(line_mask: MatLike) -> list[int]:
+    # count how many pixels are lit in each row — staff lines will have much higher counts than gaps
     row_strength = np.sum(line_mask > MASK_BACKGROUND, axis=1).astype(np.float32)
 
     if row_strength.size == 0:
@@ -79,6 +82,7 @@ def _cluster_rows(rows: np.ndarray, max_gap: int = LINE_CLUSTER_MAX_GAP) -> list
     start = int(rows[0])
     prev = start
 
+    # consecutive rows within max_gap of each other belong to the same line; take their midpoint
     for value in rows[1:]:
         y = int(value)
         if y - prev > max_gap:
@@ -106,6 +110,7 @@ def group_into_staffs(
             i += 1
             continue
 
+        # real staff lines are evenly spaced; reject candidates where any gap deviates too much from the mean
         tolerance = max(
             STAFF_SPACING_TOLERANCE_MIN, mean_gap * STAFF_SPACING_TOLERANCE_FRAC
         )
@@ -118,6 +123,7 @@ def group_into_staffs(
             x0, x1 = _line_extent(line_mask, y)
             lines.append(StaffLine(y=y, x_start=x0, x_end=x1))
 
+        # pad vertically so stems above/below the outermost lines are inside the staff bounding box
         pad = STAFF_VERTICAL_PADDING_FRAC * mean_gap
         top = max(0, int(candidate[0] - pad))
         bottom = min(shape[0] - 1, int(candidate[-1] + pad))
@@ -140,6 +146,7 @@ def _line_extent(line_mask: MatLike, y: int, half_window: int = 1) -> tuple[int,
 
 
 def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
+    # use the global binary here because bar lines need hard vertical edges to survive
     horizontal = extract_horizontal_lines(binary)
     allowed = _staff_removal_band_mask(binary.shape, staffs)
     result = cv.subtract(binary, cv.bitwise_and(horizontal, allowed))
@@ -149,17 +156,19 @@ def erase_staff_for_bars(binary: MatLike, staffs: list[Staff]) -> MatLike:
 def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> tuple[MatLike, MatLike]:
     """
     Erase staff lines for note detection.
-    
+
     Returns:
         Tuple of (raw_adaptive_mask, processed_mask)
         - raw_adaptive_mask: Binary image after adaptive thresholding (staff lines intact)
         - processed_mask: After staff removal and slit repair
     """
     inverted = cv.bitwise_not(gray)
+    # adaptive threshold handles uneven lighting across the page better than a global threshold
     bw = cv.adaptiveThreshold(
         inverted, MASK_FOREGROUND, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 15, -2
     )
 
+    # reconstruct staff lines using open/close so we only erase actual line pixels, not nearby noteheads
     kernel_width = max(1, bw.shape[1] // 30)
     structure = cv.getStructuringElement(cv.MORPH_RECT, (kernel_width, 1))
     staff_reconstruction = cv.dilate(cv.erode(bw, structure), structure)
@@ -167,11 +176,12 @@ def erase_staff_for_notes(gray: MatLike, staffs: list[Staff]) -> tuple[MatLike, 
     allowed = _staff_removal_band_mask(bw.shape, staffs)
     result = cv.subtract(bw, cv.bitwise_and(staff_reconstruction, allowed))
     processed = _repair_slits(result, staffs)
-    
+
     return bw, processed
 
 
 def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:
+    # only allow erasure within a narrow band around each line so noteheads sitting near a line aren't wiped out
     h, w = shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
 
@@ -188,7 +198,8 @@ def _staff_removal_band_mask(shape: tuple, staffs: list[Staff]) -> MatLike:
 
 
 def _repair_slits(ink: MatLike, staffs: list[Staff]) -> MatLike:
-    """Heal gaps where stems crossed staff lines, so filled noteheads stay solid."""
+    """When a stem crosses a staff line, erasure leaves a horizontal gap through the notehead.
+    A vertical close kernel inside the line band closes that gap so filled noteheads stay solid."""
     h, w = ink.shape[:2]
     repair_mask = np.zeros((h, w), dtype=np.uint8)
 
@@ -201,8 +212,10 @@ def _repair_slits(ink: MatLike, staffs: list[Staff]) -> MatLike:
             x1 = min(w, line.x_end + 1)
             repair_mask[y0:y1, x0:x1] = MASK_FOREGROUND
 
+    # 1-pixel-wide vertical kernel so we only close vertical gaps, not horizontal ones
     kernel_height = max(SLIT_REPAIR_KERNEL_MIN, min(SLIT_REPAIR_KERNEL_MAX, 3))
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_height))
     repaired = cv.morphologyEx(ink, cv.MORPH_CLOSE, kernel)
 
+    # only apply the repair inside the band; leave everything else untouched
     return np.where(repair_mask > 0, repaired, ink).astype(ink.dtype)
