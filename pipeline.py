@@ -69,6 +69,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     )
     print(f"  {len(staffs)} staff(s)")
 
+    # two separate erasure passes: notes need adaptive thresholding, bars need the global binary
     notes_mask_raw, notes_mask = erase_staff_for_notes(gray, staffs)
     bars_mask = erase_staff_for_bars(binary, staffs)
     artifacts.write_image(
@@ -98,6 +99,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     save_clef_visualization(clef_key_crops, clefs_by_staff, clef_detections, artifacts)
     print(f"  {[clef.kind for clef in clefs_by_staff.values()]}")
 
+    # key and time signature are read from the first staff only and applied to all staves
     header = _analyze_first_staff_header(
         clef_key_crops=clef_key_crops,
         raw_clef_key_crops=raw_clef_key_crops,
@@ -254,9 +256,11 @@ def _analyze_first_staff_header(
             x_end=max_x + 1,
         )
     except FileNotFoundError:
+        # template images are missing; skip key signature detection gracefully
         accidentals = []
 
     time_signature = None
+    # the time signature sits in the right portion of the header crop, after the key signature
     time_x_start = max(0, int(round(raw_crop.shape[1] * 0.40)))
     time_x_end = min(raw_crop.shape[1], bar_limit_x + 1)
     if time_x_end - time_x_start >= max(6, int(round(staff.spacing * 0.8))):
@@ -287,6 +291,7 @@ def _header_search_window(
     margin = max(1, int(round(staff.spacing * 0.15)))
     bar_limit_x = crop_width - 1
 
+    # stop the search window at the first bar line so we don't stray into the first measure
     staff_bars = sorted(
         [bar for bar in bars if bar.staff_index == 0], key=lambda bar: bar.x
     )
@@ -301,6 +306,7 @@ def _header_search_window(
             ),
         )
 
+    # find the large blobs in the crop (clef symbol, accidentals); use them to bracket the key signature region
     count, _, stats, _ = cv.connectedComponentsWithStats(crop, connectivity=8)
     components = []
     min_area = max(8, int(round(staff.spacing * staff.spacing * 0.20)))
@@ -314,8 +320,10 @@ def _header_search_window(
     max_x = bar_limit_x
     if components:
         components.sort()
+        # start just after the rightmost edge of the leftmost blob (the clef symbol)
         min_x = min(crop_width - 1, components[0][1] + margin)
         if len(components) > 1:
+            # end just before the leftmost edge of the rightmost blob (the time signature or first bar)
             max_x = min(max_x, components[-1][0] - margin)
 
     return min_x, max(min_x, min(crop_width - 1, max_x)), bar_limit_x
@@ -326,6 +334,7 @@ def _detect_time_signature_from_roi(time_roi: MatLike) -> TimeSignature | None:
         return None
 
     gray = to_gray(time_roi)
+    # upscale significantly before OCR so the digits are large enough for Tesseract to read reliably
     prepared = cv.resize(gray, None, fx=10.0, fy=10.0, interpolation=cv.INTER_CUBIC)
     _, prepared = cv.threshold(prepared, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
     prepared = cv.copyMakeBorder(prepared, 8, 8, 8, 8, cv.BORDER_CONSTANT, value=255)
@@ -339,16 +348,20 @@ def _detect_time_signature_from_roi(time_roi: MatLike) -> TimeSignature | None:
         text = pytesseract.image_to_string(image, config=config)
         return [int(token) for token in re.findall(r"\d+", text)]
 
+    # first try reading the top and bottom halves independently; this is more reliable
+    # because Tesseract can focus on a single digit at a time
     mid = prepared.shape[0] // 2
     top_tokens = ocr_numbers(prepared[:mid, :], psm=10)
     bottom_tokens = ocr_numbers(prepared[mid:, :], psm=10)
     if len(top_tokens) == 1 and len(bottom_tokens) == 1:
         return TimeSignature(numerator=top_tokens[0], denominator=bottom_tokens[0])
 
+    # fall back to reading the whole image at once if the split approach failed
     tokens = ocr_numbers(prepared, psm=6)
     if len(tokens) == 2:
         return TimeSignature(numerator=tokens[0], denominator=tokens[1])
 
+    # last resort: check for the common time symbol "C"
     common_time = cv.resize(gray, None, fx=8.0, fy=8.0, interpolation=cv.INTER_CUBIC)
     config = "--oem 3 --psm 8 -c tessedit_char_whitelist=Cc"
     if pytesseract.image_to_string(common_time, config=config).strip().lower() == "c":
@@ -363,6 +376,8 @@ def _refine_first_measure_start(
     notes_mask: MatLike,
     staffs: list[Staff],
 ) -> None:
+    """Some scans have a stray blob or clef artifact right at the left edge of the first measure.
+    This function runs a quick note detection pass and nudges the measure start past it if found."""
     if not staffs or not measures_map.get(0) or not measure_crops.get(0):
         return
 
@@ -386,6 +401,7 @@ def _refine_first_measure_start(
     if detected_notes[0].center_x > left_edge_threshold:
         return
 
+    # if the leftmost note is a significant outlier in pitch compared to the rest, treat it as an artifact
     typical_step = median(note.step for note in detected_notes[1:])
     if detected_notes[0].step < typical_step + 2:
         return

@@ -23,16 +23,13 @@ def split_measures(
     first_staff_conservative_spacings: float = 7.0,
     content_start_overrides: dict[int, int] | None = None,
 ) -> dict[int, list[Measure]]:
-    # Get the barlines grouped by staff
     barlines_by_staff = _group_barlines_by_staff(bars, len(staffs))
-    measures_map = {}  # map staff index to list of measures
+    measures_map = {}
 
     content_start_overrides = content_start_overrides or {}
 
     for staff_index, staff in enumerate(staffs):
-        # split each staff based on its index, and any left side spacing we need to crop out
-        # this is to avoid any clefs or other artifacts like key or time signature from getting
-        # in the way of our measure splitting
+        # each staff gets a left-side skip to avoid including the clef, key, and time signature in the first measure
         measures_map[staff_index] = _split_staff(
             staff=staff,
             staff_index=staff_index,
@@ -41,7 +38,8 @@ def split_measures(
             content_start_override=content_start_overrides.get(staff_index),
         )
 
-    # If no explicit header end was supplied for the first staff, keep the old conservative fallback.
+    # if no header boundary was detected, apply a conservative fallback so the first measure
+    # can't start inside the header region
     if 0 in measures_map and measures_map[0] and 0 not in content_start_overrides:
         first_staff = staffs[0]
         safe_starting_point = _staff_left(first_staff) + int(
@@ -82,14 +80,14 @@ def _bar_trim_px(staff) -> int:
 
 
 def _usable_bars(staff_bars: list, content_start_x: int, staff_right: int) -> list:
+    # exclude bars that fall inside the header region or past the staff edge
     return [b for b in staff_bars if content_start_x < b.x < staff_right]
 
 
 def _build_measure(x_start: int, x_end: int, staff, staff_index: int) -> Measure | None:
-    # check minimum width to be considered a measure
+    # reject slices that are too narrow to contain a real note
     if x_end - x_start < MIN_WIDTH_PX:
         return None
-    # creat the object
     return Measure(
         x_start=x_start,
         x_end=x_end,
@@ -130,6 +128,7 @@ def _split_staff(
     current_start = content_start_x
 
     for index, bar in enumerate(usable_bars):
+        # skip the left stroke of a double bar; the right stroke is the actual measure boundary
         if bar.kind == "double_left":
             if (
                 index + 1 < len(usable_bars)
