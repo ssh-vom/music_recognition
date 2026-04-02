@@ -1,3 +1,5 @@
+"""Clef detection - classify treble vs bass via template matching."""
+
 from pathlib import Path
 
 import cv2 as cv
@@ -18,9 +20,12 @@ def detect_clef(clef_key_crop: MatLike) -> ClefDetection:
     if roi is None:
         return _empty_detection()
 
+    # letterbox match scales the template to fill the ROI and runs a single comparison
     treble_score, treble_rect = _letterbox_match(roi, treble_template)
     bass_score, bass_rect = _letterbox_match(roi, bass_template)
 
+    # multi-scale match tries the template at several sizes to handle printed clefs
+    # that are smaller or larger than our reference image
     slide_treble = _multi_scale_match(roi, treble_template)
     slide_bass = _multi_scale_match(roi, bass_template)
 
@@ -63,6 +68,7 @@ def _trim_white_border(
     gray: MatLike,
     thresh: int = const.CLEF_TRIM_WHITE_THRESH,
 ) -> MatLike:
+    # removes blank padding so the match score isn't diluted by empty margins
     _, inv = cv.threshold(gray, thresh, 255, cv.THRESH_BINARY_INV)
     pts = cv.findNonZero(inv)
     if pts is None:
@@ -75,8 +81,10 @@ def _trim_white_border(
 
 def _prepare_roi(clef_key_crop: MatLike) -> MatLike | None:
     gray = to_gray(clef_key_crop)
+    # invert so ink is white on black, which is what the templates expect
     gray = cv.bitwise_not(gray)
     width = gray.shape[1]
+    # crop to the left portion only since the clef sits there and the key signature is further right
     roi = gray[:, : max(1, int(width * const.CLEF_ROI_WIDTH_FRAC))]
     if roi.shape[0] < 8 or roi.shape[1] < 8:
         return None
@@ -101,6 +109,8 @@ def _empty_detection() -> ClefDetection:
 def _select_clef(
     treble_score: float, bass_score: float
 ) -> tuple[ClefKind | None, float]:
+    # treble wins unless bass beats it by more than the tie margin
+    # since treble is much more common in the sheet music we tested against
     if treble_score + const.CLEF_TIE_MARGIN >= bass_score:
         winner, confidence = "treble", treble_score
     else:
@@ -115,6 +125,8 @@ def _letterbox_match(roi: MatLike, template: MatLike) -> tuple[float, tuple]:
     roi_h, roi_w = roi.shape[:2]
     th, tw = template.shape[:2]
 
+    # fit the template inside the ROI while keeping the aspect ratio, then centre it on a white canvas
+    # so matchTemplate receives two images of the same size and returns a single score at (0, 0)
     scale = max(min((roi_w - 1) / tw, (roi_h - 1) / th) * 0.99, 1e-6)
     new_w = max(1, int(round(tw * scale)))
     new_h = max(1, int(round(th * scale)))
@@ -135,6 +147,7 @@ def _multi_scale_match(roi: MatLike, template: MatLike) -> float:
     roi_h, roi_w = roi.shape[:2]
     best_score = 0.0
 
+    # try the template at a few different heights and return the best score found
     for scale_frac in const.CLEF_MATCH_SCALES:
         target_h = max(12, min(roi_h - 1, int(round(roi_h * scale_frac))))
         scaled = resize_to_height(template, target_h)
