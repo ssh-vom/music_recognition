@@ -1,5 +1,3 @@
-"""Export detected music to ABC notation."""
-
 from pathlib import Path
 
 from schema import BarLine

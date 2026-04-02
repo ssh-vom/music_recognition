@@ -1,40 +1,10 @@
-"""Note detection - find noteheads and resolve pitch/duration."""
-
 import math
 
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
+from constants import Constants as const
 
-from constants import (
-    DUPLICATE_MAX_STEP_DIFF,
-    DUPLICATE_X_TOLERANCE_FRAC,
-    DUPLICATE_Y_TOLERANCE_FRAC,
-    FILL_ELLIPSE_X_RADIUS_FRAC,
-    FILL_ELLIPSE_Y_RADIUS_FRAC,
-    FILL_RATIO_THRESHOLD,
-    HOLLOW_NOTE_Y_OFFSET_FRAC,
-    HOLLOW_SPLIT_INK_RATIO_MAX,
-    HOLLOW_SPLIT_X_TOLERANCE_FRAC,
-    NOTEHEAD_CLEANUP_KERNEL,
-    NOTEHEAD_KERNEL_DIAMETER_FRAC,
-    NOTEHEAD_KERNEL_MIN,
-    NOTE_MAX_AREA_FRAC,
-    NOTE_MAX_ASPECT,
-    NOTE_MAX_SIZE_FRAC,
-    NOTE_MERGE_DISTANCE_FRAC,
-    NOTE_MIN_AREA_FRAC,
-    NOTE_MIN_ASPECT,
-    NOTE_MIN_SIZE_FRAC,
-    NOTE_TINY_AREA_FRAC,
-    STEP_CONFIDENCE_HIGH,
-    STEP_CONFIDENCE_MEDIUM,
-    STEP_ROUND_UP_THRESHOLD,
-    STEM_MIN_RUN_FRAC,
-    STEM_X_RADIUS_FRAC,
-    STEM_Y_RADIUS_FRAC,
-    WHOLE_NOTE_FILL_RATIO_MAX,
-)
 from schema import (
     Clef,
     DurationClass,
@@ -78,7 +48,7 @@ def find_notes(
         components, secondary, staff.spacing, mask.shape, intermediates
     )
 
-    merge_distance = max(2, int(round(staff.spacing * NOTE_MERGE_DISTANCE_FRAC)))
+    merge_distance = max(2, int(round(staff.spacing * const.NOTE_MERGE_DISTANCE_FRAC)))
     centers = _merge_nearby_centers(centers, merge_distance)
 
     intermediates["centers_after_merge"] = centers.copy()
@@ -95,7 +65,8 @@ def find_notes(
 
 def _extract_notehead_mask(mask: MatLike, spacing: float) -> MatLike:
     diameter = max(
-        NOTEHEAD_KERNEL_MIN, int(round(spacing * NOTEHEAD_KERNEL_DIAMETER_FRAC))
+        const.NOTEHEAD_KERNEL_MIN,
+        int(round(spacing * const.NOTEHEAD_KERNEL_DIAMETER_FRAC)),
     )
     if diameter % 2 == 0:
         diameter += 1
@@ -103,13 +74,17 @@ def _extract_notehead_mask(mask: MatLike, spacing: float) -> MatLike:
     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (diameter, diameter))
     opened = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
     # small close pass smooths the jagged edges the open leaves on notehead outlines
-    cleanup_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, NOTEHEAD_CLEANUP_KERNEL)
+    cleanup_kernel = cv.getStructuringElement(
+        cv.MORPH_ELLIPSE, const.NOTEHEAD_CLEANUP_KERNEL
+    )
     return cv.morphologyEx(opened, cv.MORPH_CLOSE, cleanup_kernel)
 
 
 def _create_secondary_mask(mask: MatLike) -> MatLike:
     # Smooths without the size-filtering open, to refine center of tiny blobs
-    cleanup_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, NOTEHEAD_CLEANUP_KERNEL)
+    cleanup_kernel = cv.getStructuringElement(
+        cv.MORPH_ELLIPSE, const.NOTEHEAD_CLEANUP_KERNEL
+    )
     return cv.morphologyEx(mask, cv.MORPH_CLOSE, cleanup_kernel)
 
 
@@ -119,11 +94,11 @@ def _filter_notehead_candidates(
     count, _, stats, centroids = components
     s_count, _, s_stats, s_centroids = secondary
 
-    min_area = spacing * spacing * NOTE_MIN_AREA_FRAC
-    max_area = spacing * spacing * NOTE_MAX_AREA_FRAC
-    min_size = int(round(spacing * NOTE_MIN_SIZE_FRAC))
-    max_size = int(round(spacing * NOTE_MAX_SIZE_FRAC))
-    tiny_area = spacing * spacing * NOTE_TINY_AREA_FRAC
+    min_area = spacing * spacing * const.NOTE_MIN_AREA_FRAC
+    max_area = spacing * spacing * const.NOTE_MAX_AREA_FRAC
+    min_size = int(round(spacing * const.NOTE_MIN_SIZE_FRAC))
+    max_size = int(round(spacing * const.NOTE_MAX_SIZE_FRAC))
+    tiny_area = spacing * spacing * const.NOTE_TINY_AREA_FRAC
 
     centers = []
     filtered_log = []
@@ -136,7 +111,7 @@ def _filter_notehead_candidates(
 
         valid_area = min_area <= area <= max_area
         valid_size = min_size <= w <= max_size and min_size <= h <= max_size
-        valid_aspect = NOTE_MIN_ASPECT <= aspect <= NOTE_MAX_ASPECT
+        valid_aspect = const.NOTE_MIN_ASPECT <= aspect <= const.NOTE_MAX_ASPECT
 
         cx = int(round(centroids[i][0]))
         cy = int(round(centroids[i][1]))
@@ -331,10 +306,17 @@ def _resolve_notes(
             # hollow note centroids skew upward because the morph rounds off the top of the open head;
             # only apply the correction when the note is above the bottom line — low notes don't have this problem
             if cy <= bottom_line_y:
-                cy_pitch = cy + int(round(staff.spacing * HOLLOW_NOTE_Y_OFFSET_FRAC))
+                cy_pitch = cy + int(
+                    round(staff.spacing * const.HOLLOW_NOTE_Y_OFFSET_FRAC)
+                )
 
         step_float = (bottom_line_y - cy_pitch) / half_step_px
-        step = _quantize_to_step(step_float)
+        lower_bound = math.floor(step_float)
+        step = (
+            lower_bound
+            if step_float - lower_bound >= const.STEP_ROUND_UP_THRESHOLD
+            else lower_bound + 1
+        )
         residual = abs(step_float - step)
 
         notes.append(
@@ -353,17 +335,10 @@ def _resolve_notes(
     return notes
 
 
-def _quantize_to_step(step_float: float) -> int:
-    lower = math.floor(step_float)
-    if step_float - lower >= STEP_ROUND_UP_THRESHOLD:
-        return lower + 1
-    return lower
-
-
 def _step_confidence(residual: float) -> StepConfidence:
-    if residual <= STEP_CONFIDENCE_HIGH:
+    if residual <= const.STEP_CONFIDENCE_HIGH:
         return "high"
-    if residual <= STEP_CONFIDENCE_MEDIUM:
+    if residual <= const.STEP_CONFIDENCE_MEDIUM:
         return "medium"
     return "low"
 
@@ -374,9 +349,9 @@ def _merge_duplicate_detections(
     if len(notes) < 2:
         return notes
 
-    x_tol = max(2, int(round(spacing * DUPLICATE_X_TOLERANCE_FRAC)))
-    y_tol = max(2, int(round(spacing * DUPLICATE_Y_TOLERANCE_FRAC)))
-    hollow_x_tol = max(2, int(round(spacing * HOLLOW_SPLIT_X_TOLERANCE_FRAC)))
+    x_tol = max(2, int(round(spacing * const.DUPLICATE_X_TOLERANCE_FRAC)))
+    y_tol = max(2, int(round(spacing * const.DUPLICATE_Y_TOLERANCE_FRAC)))
+    hollow_x_tol = max(2, int(round(spacing * const.HOLLOW_SPLIT_X_TOLERANCE_FRAC)))
 
     result = [notes[0]]
 
@@ -389,7 +364,7 @@ def _merge_duplicate_detections(
             and note.duration_class is None
             and abs(note.center_x - prev.center_x) <= x_tol
             and abs(note.center_y - prev.center_y) <= y_tol
-            and abs(note.step - prev.step) <= DUPLICATE_MAX_STEP_DIFF
+            and abs(note.step - prev.step) <= const.DUPLICATE_MAX_STEP_DIFF
         )
 
         # a hollow notehead can split into two blobs (left and right arcs); confirm by checking
@@ -399,7 +374,7 @@ def _merge_duplicate_detections(
             and note.duration_class in ("quarter", "whole")
             and abs(note.center_x - prev.center_x) <= hollow_x_tol
             and abs(note.center_y - prev.center_y) <= y_tol
-            and abs(note.step - prev.step) <= DUPLICATE_MAX_STEP_DIFF
+            and abs(note.step - prev.step) <= const.DUPLICATE_MAX_STEP_DIFF
             and _has_hollow_center_gap(mask, prev, note, spacing)
         )
 
@@ -418,7 +393,10 @@ def _merge_duplicate_detections(
 
 
 def _has_hollow_center_gap(
-    mask: MatLike | None, note1: Note, note2: Note, spacing: float
+    mask: MatLike | None,
+    note1: Note,
+    note2: Note,
+    spacing: float,
 ) -> bool:
     if mask is None:
         dist = abs(note1.center_x - note2.center_x)
@@ -437,11 +415,14 @@ def _has_hollow_center_gap(
         return False
 
     roi = mask[y0:y1, x0:x1]
-    return cv.countNonZero(roi) / float(roi.size) < HOLLOW_SPLIT_INK_RATIO_MAX
+    return cv.countNonZero(roi) / float(roi.size) < const.HOLLOW_SPLIT_INK_RATIO_MAX
 
 
 def _classify_duration(
-    mask: MatLike, cx: int, cy: int, spacing: float
+    mask: MatLike,
+    cx: int,
+    cy: int,
+    spacing: float,
 ) -> DurationClass | None:
     filled = _detect_fill(mask, cx, cy, spacing)
     has_stem = _detect_stem(mask, cx, cy, spacing)
@@ -458,8 +439,8 @@ def _classify_duration(
 
 
 def _detect_fill(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    rx = max(2, int(round(spacing * FILL_ELLIPSE_X_RADIUS_FRAC)))
-    ry = max(2, int(round(spacing * FILL_ELLIPSE_Y_RADIUS_FRAC)))
+    rx = max(2, int(round(spacing * const.FILL_ELLIPSE_X_RADIUS_FRAC)))
+    ry = max(2, int(round(spacing * const.FILL_ELLIPSE_Y_RADIUS_FRAC)))
 
     x0, x1 = max(0, cx - rx), min(mask.shape[1], cx + rx + 1)
     y0, y1 = max(0, cy - ry), min(mask.shape[0], cy + ry + 1)
@@ -485,12 +466,12 @@ def _detect_fill(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
         return False
 
     ink = cv.countNonZero(cv.bitwise_and(roi, roi, mask=ellipse))
-    return ink / float(ellipse_area) >= FILL_RATIO_THRESHOLD
+    return ink / float(ellipse_area) >= const.FILL_RATIO_THRESHOLD
 
 
 def _detect_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
-    rx = max(2, int(round(spacing * STEM_X_RADIUS_FRAC)))
-    ry = max(3, int(round(spacing * STEM_Y_RADIUS_FRAC)))
+    rx = max(2, int(round(spacing * const.STEM_X_RADIUS_FRAC)))
+    ry = max(3, int(round(spacing * const.STEM_Y_RADIUS_FRAC)))
 
     x0, x1 = max(0, cx - rx), min(mask.shape[1], cx + rx + 1)
     y0, y1 = max(0, cy - ry), min(mask.shape[0], cy + ry + 1)
@@ -499,7 +480,7 @@ def _detect_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
     if roi.size == 0 or roi.shape[1] < 2:
         return False
 
-    min_run = max(3, int(round(spacing * STEM_MIN_RUN_FRAC)))
+    min_run = max(3, int(round(spacing * const.STEM_MIN_RUN_FRAC)))
 
     # scan each column for a long unbroken vertical run of ink — that's a stem
     for col in range(roi.shape[1]):
@@ -517,10 +498,13 @@ def _detect_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
 
 
 def _resolve_ambiguous_filled_note(
-    mask: MatLike, cx: int, cy: int, spacing: float
+    mask: MatLike,
+    cx: int,
+    cy: int,
+    spacing: float,
 ) -> DurationClass:
-    rx = max(2, int(round(spacing * FILL_ELLIPSE_X_RADIUS_FRAC)))
-    ry = max(2, int(round(spacing * FILL_ELLIPSE_Y_RADIUS_FRAC)))
+    rx = max(2, int(round(spacing * const.FILL_ELLIPSE_X_RADIUS_FRAC)))
+    ry = max(2, int(round(spacing * const.FILL_ELLIPSE_Y_RADIUS_FRAC)))
 
     x0, x1 = max(0, cx - rx), min(mask.shape[1], cx + rx + 1)
     y0, y1 = max(0, cy - ry), min(mask.shape[0], cy + ry + 1)
@@ -529,13 +513,12 @@ def _resolve_ambiguous_filled_note(
     if roi.size == 0:
         return "quarter"
 
-    if cv.countNonZero(roi) / float(roi.size) < WHOLE_NOTE_FILL_RATIO_MAX:
+    if cv.countNonZero(roi) / float(roi.size) < const.WHOLE_NOTE_FILL_RATIO_MAX:
         return "whole"
     return "quarter"
 
 
 def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
-    """Convert step positions to pitch letters and octaves based on clef."""
     if clef is None or clef.kind not in CLEF_BASE_POSITIONS:
         return
 

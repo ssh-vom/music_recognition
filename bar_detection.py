@@ -1,31 +1,8 @@
-"""Bar line detection - find vertical lines separating measures."""
-
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
-from constants import (
-    BAR_CLOSE_KERNEL_HEIGHT_FRAC,
-    BAR_CLOSE_KERNEL_MIN,
-    BAR_DOUBLE_MIN_WIDTH_FRAC,
-    BAR_LEFT_MARGIN_FRAC,
-    BAR_LEFT_RELAXED_EXTRA_FRAC,
-    BAR_MAX_WIDTH_FRAC,
-    BAR_MERGE_DISTANCE_FRAC,
-    BAR_MIN_DENSITY,
-    BAR_MIN_HEIGHT_FRAC,
-    BAR_PAIR_GAP_FRAC,
-    BAR_RIGHT_MARGIN_FRAC,
-    BAR_SEARCH_LEFT_SKIP_FRAC,
-    BAR_SEARCH_LEFT_SKIP_OTHER_FRAC,
-    REPEAT_DOT_BAR_GAP_FRAC,
-    REPEAT_DOT_MAX_AREA_FRAC,
-    REPEAT_DOT_MAX_SIZE_FRAC,
-    REPEAT_DOT_MIN_AREA_FRAC,
-    REPEAT_DOT_SEARCH_WIDTH_FRAC,
-    REPEAT_DOT_X_ALIGNMENT_FRAC,
-    REPEAT_DOT_Y_TOLERANCE_FRAC,
-)
+from constants import Constants as const
 from schema import BarLine, Staff
 
 
@@ -43,7 +20,9 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
 
     # the first staff has clef + key + time signature on the left; later staves only repeat the clef
     skip_mult = (
-        BAR_SEARCH_LEFT_SKIP_FRAC if staff_idx == 0 else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC
+        const.BAR_SEARCH_LEFT_SKIP_FRAC
+        if staff_idx == 0
+        else const.BAR_SEARCH_LEFT_SKIP_OTHER_FRAC
     )
     left_skip = int(round(skip_mult * staff.spacing))
     work = roi[:, left_skip:]
@@ -53,7 +32,8 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
 
     # vertical close kernel reconnects bar line segments that were broken by staff line erasure
     kernel_h = max(
-        BAR_CLOSE_KERNEL_MIN, int(round(BAR_CLOSE_KERNEL_HEIGHT_FRAC * staff.spacing))
+        const.BAR_CLOSE_KERNEL_MIN,
+        int(round(const.BAR_CLOSE_KERNEL_HEIGHT_FRAC * staff.spacing)),
     )
     kernel = cv.getStructuringElement(cv.MORPH_RECT, (1, kernel_h))
     joined = cv.morphologyEx(work, cv.MORPH_CLOSE, kernel)
@@ -77,14 +57,14 @@ def _contours_to_bars(
 ) -> list[BarLine]:
     staff_right = max(line.x_end for line in staff.lines)
 
-    max_width = int(round(BAR_MAX_WIDTH_FRAC * staff.spacing))
-    min_double_width = int(round(BAR_DOUBLE_MIN_WIDTH_FRAC * staff.spacing))
-    right_margin = int(round(BAR_RIGHT_MARGIN_FRAC * staff.spacing))
-    left_margin = int(round(BAR_LEFT_MARGIN_FRAC * staff.spacing))
+    max_width = int(round(const.BAR_MAX_WIDTH_FRAC * staff.spacing))
+    min_double_width = int(round(const.BAR_DOUBLE_MIN_WIDTH_FRAC * staff.spacing))
+    right_margin = int(round(const.BAR_RIGHT_MARGIN_FRAC * staff.spacing))
+    left_margin = int(round(const.BAR_LEFT_MARGIN_FRAC * staff.spacing))
     left_relaxed_max = max_width + int(
-        round(BAR_LEFT_RELAXED_EXTRA_FRAC * staff.spacing)
+        round(const.BAR_LEFT_RELAXED_EXTRA_FRAC * staff.spacing)
     )
-    min_height = int(round(BAR_MIN_HEIGHT_FRAC * staff_h))
+    min_height = int(round(const.BAR_MIN_HEIGHT_FRAC * staff_h))
 
     bars = []
     for contour in contours:
@@ -108,7 +88,7 @@ def _contours_to_bars(
         # blobs near the left edge can be thicker due to clef artifacts, so we relax the width limit there
         left_relaxed = near_left and w <= left_relaxed_max and density >= 0.50
         if not left_relaxed and (
-            density < BAR_MIN_DENSITY or (w > max_width and density < 0.75)
+            density < const.BAR_MIN_DENSITY or (w > max_width and density < 0.75)
         ):
             continue
 
@@ -141,7 +121,7 @@ def _merge_and_classify_pairs(
         return bars
 
     bars = sorted(bars, key=lambda b: b.x)
-    merge_dist = max(3, int(round(BAR_MERGE_DISTANCE_FRAC * staff.spacing)))
+    merge_dist = max(3, int(round(const.BAR_MERGE_DISTANCE_FRAC * staff.spacing)))
 
     # average together any two single bars that landed very close to each other
     merged = [bars[0]]
@@ -158,16 +138,16 @@ def _merge_and_classify_pairs(
     staff_right = max(line.x_end for line in staff.lines)
     left_skip = int(
         round(
-            BAR_SEARCH_LEFT_SKIP_FRAC * staff.spacing
+            const.BAR_SEARCH_LEFT_SKIP_FRAC * staff.spacing
             if staff_idx == 0
-            else BAR_SEARCH_LEFT_SKIP_OTHER_FRAC * staff.spacing
+            else const.BAR_SEARCH_LEFT_SKIP_OTHER_FRAC * staff.spacing
         )
     )
 
-    edge_margin = int(round(BAR_LEFT_MARGIN_FRAC * staff.spacing))
+    edge_margin = int(round(const.BAR_LEFT_MARGIN_FRAC * staff.spacing))
     left_edge = left_skip + edge_margin
     right_edge = staff_right - edge_margin
-    pair_gap = max(2, int(round(BAR_PAIR_GAP_FRAC * staff.spacing)))
+    pair_gap = max(2, int(round(const.BAR_PAIR_GAP_FRAC * staff.spacing)))
 
     result = []
     i = 0
@@ -199,7 +179,7 @@ def _classify_repeat_markers(
     if len(bars) < 2:
         return
 
-    pair_gap = max(2, int(round(BAR_PAIR_GAP_FRAC * staff.spacing)))
+    pair_gap = max(2, int(round(const.BAR_PAIR_GAP_FRAC * staff.spacing)))
     i = 0
     while i + 1 < len(bars):
         left, right = bars[i], bars[i + 1]
@@ -249,8 +229,8 @@ def _has_repeat_dots_on_side(
     if h == 0 or w == 0:
         return False
 
-    search_w = max(4, int(round(staff.spacing * REPEAT_DOT_SEARCH_WIDTH_FRAC)))
-    gap = max(1, int(round(staff.spacing * REPEAT_DOT_BAR_GAP_FRAC)))
+    search_w = max(4, int(round(staff.spacing * const.REPEAT_DOT_SEARCH_WIDTH_FRAC)))
+    gap = max(1, int(round(staff.spacing * const.REPEAT_DOT_BAR_GAP_FRAC)))
 
     if side == "left":
         x0 = max(0, bar_x - gap - search_w)
@@ -267,18 +247,18 @@ def _has_repeat_dots_on_side(
     count, _, stats, centroids = cv.connectedComponentsWithStats(binary, connectivity=8)
 
     min_area = max(
-        1, int(round(staff.spacing * staff.spacing * REPEAT_DOT_MIN_AREA_FRAC))
+        1, int(round(staff.spacing * staff.spacing * const.REPEAT_DOT_MIN_AREA_FRAC))
     )
     max_area = max(
-        2, int(round(staff.spacing * staff.spacing * REPEAT_DOT_MAX_AREA_FRAC))
+        2, int(round(staff.spacing * staff.spacing * const.REPEAT_DOT_MAX_AREA_FRAC))
     )
-    max_size = max(2, int(round(staff.spacing * REPEAT_DOT_MAX_SIZE_FRAC)))
+    max_size = max(2, int(round(staff.spacing * const.REPEAT_DOT_MAX_SIZE_FRAC)))
 
     line_mid = int(round(staff.lines[2].y - y0))
     expected_top = line_mid - int(round(staff.spacing * 0.5))
     expected_bottom = line_mid + int(round(staff.spacing * 0.5))
-    y_tol = max(2, int(round(staff.spacing * REPEAT_DOT_Y_TOLERANCE_FRAC)))
-    x_align_tol = max(2, int(round(staff.spacing * REPEAT_DOT_X_ALIGNMENT_FRAC)))
+    y_tol = max(2, int(round(staff.spacing * const.REPEAT_DOT_Y_TOLERANCE_FRAC)))
+    x_align_tol = max(2, int(round(staff.spacing * const.REPEAT_DOT_X_ALIGNMENT_FRAC)))
 
     candidates: list[tuple[int, int]] = []
     for i in range(1, count):

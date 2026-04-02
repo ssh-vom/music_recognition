@@ -1,5 +1,3 @@
-"""Accidental detection (sharp/flat) via template matching."""
-
 from pathlib import Path
 
 import cv2 as cv
@@ -220,10 +218,14 @@ def _accidental_kind_from_component(label: int, labels, stats) -> str | None:
     top = int(stats[label, cv.CC_STAT_TOP])
     width = int(stats[label, cv.CC_STAT_WIDTH])
     height = int(stats[label, cv.CC_STAT_HEIGHT])
-    component = (labels[top : top + height, left : left + width] == label).astype(np.uint8)
+    component = (labels[top : top + height, left : left + width] == label).astype(
+        np.uint8
+    )
     tall_threshold = max(3, int(round(height * 0.75)))
     tall_cols = [
-        idx for idx, value in enumerate(np.sum(component, axis=0)) if value >= tall_threshold
+        idx
+        for idx, value in enumerate(np.sum(component, axis=0))
+        if value >= tall_threshold
     ]
     tall_clusters = _count_index_clusters(tall_cols)
     if tall_clusters >= 2:

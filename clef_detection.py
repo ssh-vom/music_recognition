@@ -1,18 +1,9 @@
-"""Clef detection - classify treble vs bass via template matching."""
-
 from pathlib import Path
 
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
-
-from constants import (
-    CLEF_MATCH_SCALES,
-    CLEF_MIN_CONFIDENCE,
-    CLEF_ROI_WIDTH_FRAC,
-    CLEF_TIE_MARGIN,
-    CLEF_TRIM_WHITE_THRESH,
-)
+from constants import Constants as const
 from schema import ClefDetection, ClefKind
 from utils import CLEF_BASS, CLEF_TREBLE, fit_to_roi, resize_to_height, to_gray
 
@@ -68,7 +59,10 @@ def _load_and_trim(path: Path) -> MatLike:
     return _trim_white_border(to_gray(img))
 
 
-def _trim_white_border(gray: MatLike, thresh: int = CLEF_TRIM_WHITE_THRESH) -> MatLike:
+def _trim_white_border(
+    gray: MatLike,
+    thresh: int = const.CLEF_TRIM_WHITE_THRESH,
+) -> MatLike:
     _, inv = cv.threshold(gray, thresh, 255, cv.THRESH_BINARY_INV)
     pts = cv.findNonZero(inv)
     if pts is None:
@@ -83,7 +77,7 @@ def _prepare_roi(clef_key_crop: MatLike) -> MatLike | None:
     gray = to_gray(clef_key_crop)
     gray = cv.bitwise_not(gray)
     width = gray.shape[1]
-    roi = gray[:, : max(1, int(width * CLEF_ROI_WIDTH_FRAC))]
+    roi = gray[:, : max(1, int(width * const.CLEF_ROI_WIDTH_FRAC))]
     if roi.shape[0] < 8 or roi.shape[1] < 8:
         return None
     return roi
@@ -107,12 +101,12 @@ def _empty_detection() -> ClefDetection:
 def _select_clef(
     treble_score: float, bass_score: float
 ) -> tuple[ClefKind | None, float]:
-    if treble_score + CLEF_TIE_MARGIN >= bass_score:
+    if treble_score + const.CLEF_TIE_MARGIN >= bass_score:
         winner, confidence = "treble", treble_score
     else:
         winner, confidence = "bass", bass_score
 
-    if confidence < CLEF_MIN_CONFIDENCE:
+    if confidence < const.CLEF_MIN_CONFIDENCE:
         return None, confidence
     return winner, confidence
 
@@ -141,7 +135,7 @@ def _multi_scale_match(roi: MatLike, template: MatLike) -> float:
     roi_h, roi_w = roi.shape[:2]
     best_score = 0.0
 
-    for scale_frac in CLEF_MATCH_SCALES:
+    for scale_frac in const.CLEF_MATCH_SCALES:
         target_h = max(12, min(roi_h - 1, int(round(roi_h * scale_frac))))
         scaled = resize_to_height(template, target_h)
         scaled = fit_to_roi(scaled, roi_h, roi_w)
