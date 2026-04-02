@@ -314,7 +314,7 @@ def _resolve_notes(
         lower_bound = math.floor(step_float)
         step = (
             lower_bound
-            if step_float - lower_bound >= const.STEP_ROUND_UP_THRESHOLD
+            if step_float - lower_bound < const.STEP_ROUND_UP_THRESHOLD
             else lower_bound + 1
         )
         residual = abs(step_float - step)

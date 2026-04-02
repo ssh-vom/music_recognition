@@ -206,7 +206,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         cv.imshow(
             "Staff Detection", staff_intermediates.get("04_staff_overlay", raw_bgr)
         )
-        cv.imshow("Bar Detection", vis.draw_bars_overlay(raw_bgr, bars))
+        cv.imshow("Bar Detection", draw_bars_overlay(raw_bgr, bars))
         cv.waitKey(0)
         cv.destroyAllWindows()
 
