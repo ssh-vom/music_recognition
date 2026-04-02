@@ -1,5 +1,3 @@
-"""Clef detection - classify treble vs bass via template matching."""
-
 from pathlib import Path
 
 import cv2 as cv

@@ -3,6 +3,7 @@ from pathlib import Path
 from schema import BarLine
 from utils import EVENT_X_TOLERANCE_PX, group_notes_into_events
 
+# used when accumulating beat fractions to avoid floating-point drift causing early beam breaks
 BEAM_BREAK_EPSILON = 1e-6
 
 
@@ -63,6 +64,7 @@ def notes_to_abc_body(score, *, meter, key):
 
         bars = score.get_bars_for_staff(staff_index)
         end_bar = _find_end_bar(bars, measures)
+        # open with |: if there is a begin-repeat bar right at the start of the staff
         segments = ["|:" if _has_left_begin_repeat_flat(bars, measures) else "|"]
 
         for i, measure in enumerate(measures):
@@ -102,6 +104,7 @@ def _find_end_bar(staff_bars: list[BarLine], staff_measures: list) -> BarLine | 
     if not staff_measures:
         return None
     last_measure = staff_measures[-1]
+    # allow 10px of slack so the final bar isn't missed if it sits just outside the last measure boundary
     right_candidates = [bar for bar in staff_bars if bar.x >= (last_measure.x_end - 10)]
     return max(right_candidates, key=lambda bar: bar.x) if right_candidates else None
 
@@ -153,6 +156,8 @@ def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals):
     total = sum(beats)
     deficit = beats_per_measure - total
     has_subquarter = any(beat < 1.0 for beat in beats)
+    # if the measure is slightly short and has no sub-quarter notes, stretch the last note to fill the bar
+    # rather than leaving a gap or emitting an extra rest
     if not has_subquarter and 0.75 <= deficit <= 1.25:
         beats[-1] += deficit
 
@@ -160,6 +165,8 @@ def _notes_to_measure_tokens(notes, beats_per_measure, key_accidentals):
 
 
 def _format_tokens_with_beams(event_tokens, beats):
+    # in ABC notation, adjacent sub-quarter tokens with no space between them are rendered as beamed;
+    # we group them into runs that add up to at least one beat, then flush each run as a single string
     formatted = []
     beam_run = ""
     beam_run_beats = 0.0
@@ -191,7 +198,8 @@ def _format_tokens_with_beams(event_tokens, beats):
 
 
 def _event_to_abc_pitch(event_notes, key_accidentals):
-    """One ABC token per vertical slice: top note when several align at the same x."""
+    # when multiple notes share the same x position we only emit the highest one,
+    # since our single-voice ABC output can't represent chords
     pitch_tokens = []
     seen = set()
 
@@ -235,12 +243,14 @@ def _pitch_to_abc(pitch_letter, octave, key_accidentals):
     accidental_char = pitch_letter[1:2]
     key_accidental = key_accidentals.get(base, "")
 
+    # only write an explicit accidental if it differs from what the key signature already implies
     accidental = ""
     if accidental_char == "#" and key_accidental != "#":
         accidental = "^"
     elif accidental_char == "b" and key_accidental != "b":
         accidental = "_"
 
+    # ABC uses lowercase + apostrophes for octave 5+, uppercase + commas for octave 4 and below
     if octave >= 5:
         apostrophes = "'" * (octave - 5)
         return f"{accidental}{base.lower()}{apostrophes}"
@@ -299,6 +309,8 @@ def _note_base_beats(note):
 
 
 def _beats_to_abc_suffix(beats):
+    # ABC notation uses integer multipliers for longer notes (e.g. C2 = half note when L:1/4)
+    # and fraction suffixes for shorter ones (e.g. C/2 = eighth note)
     rounded = int(round(beats))
     if abs(beats - rounded) < 1e-6:
         return "" if rounded <= 1 else str(rounded)
