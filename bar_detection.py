@@ -18,7 +18,7 @@ def _find_staff_bars(image: MatLike, staff: Staff, staff_idx: int) -> list[BarLi
     staff_h = y1 - y0
     roi = image[y0:y1, :]
 
-    # the first staff has clef + key + time signature on the left; later staves only repeat the clef
+    # the first staff has clef + key + time signature
     skip_mult = (
         const.BAR_SEARCH_LEFT_SKIP_FRAC
         if staff_idx == 0

@@ -1,5 +1,3 @@
-"""Visualization functions for all detection modules."""
-
 import cv2 as cv
 from cv2.typing import MatLike
 

@@ -11,7 +11,7 @@ from artifact_writer import ArtifactWriter
 from bar_detection import find_bars
 from clef_detection import detect_clef
 from detection_logs import abc_key_from_score, detection_logs_text, meter_from_score
-from constants import DEFAULT_TITLE, DEFAULT_UNIT_NOTE_LENGTH
+from constants import Constants as const
 from utils import to_gray
 from measure_splitting import (
     crop_clef_regions,
@@ -38,7 +38,6 @@ from staff_detection import (
     find_staffs,
 )
 from visualization import (
-    draw_bars_overlay,
     save_bar_visualization,
     save_clef_visualization,
     save_first_staff_accidental_visualization,
@@ -192,9 +191,9 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
     write_abc_file(
         score_tree=score,
         output_path=abc_path,
-        title=DEFAULT_TITLE,
+        title=const.DEFAULT_TITLE,
         meter=meter,
-        unit_note_length=DEFAULT_UNIT_NOTE_LENGTH,
+        unit_note_length=const.DEFAULT_UNIT_NOTE_LENGTH,
         key=key,
         tempo_qpm=None,
     )
@@ -207,7 +206,7 @@ def run_pipeline(image_path: str, show_windows: bool = False) -> Score:
         cv.imshow(
             "Staff Detection", staff_intermediates.get("04_staff_overlay", raw_bgr)
         )
-        cv.imshow("Bar Detection", draw_bars_overlay(raw_bgr, bars))
+        cv.imshow("Bar Detection", vis.draw_bars_overlay(raw_bgr, bars))
         cv.waitKey(0)
         cv.destroyAllWindows()
 

@@ -1,4 +1,4 @@
-from constants import DEFAULT_KEY, DEFAULT_METER
+from constants import Constants as const
 from schema import Score
 
 
@@ -54,14 +54,14 @@ def meter_from_score(score: Score) -> str:
     clef = score.clefs.get(0)
     ts = clef.time_signature
     if ts.numerator is None or ts.denominator is None:
-        return DEFAULT_METER
+        return const.DEFAULT_METER
     return f"{ts.numerator}/{ts.denominator}"
 
 
 def abc_key_from_score(score: Score) -> str:
     clef = score.clefs.get(0)
     if clef.key_signature.fifths is None:
-        return DEFAULT_KEY
+        return const.DEFAULT_KEY
     return abc_key_from_fifths(clef.key_signature.fifths)
 
 
@@ -83,7 +83,7 @@ def abc_key_from_fifths(fifths: int) -> str:
         6: "F#",
         7: "C#",
     }
-    return major_keys.get(fifths, DEFAULT_KEY)
+    return major_keys.get(fifths, const.DEFAULT_KEY)
 
 
 def format_note_log(score: Score) -> str:
