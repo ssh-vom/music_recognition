@@ -267,7 +267,11 @@ def _count_index_clusters(indices: list[int], max_gap: int = 1) -> int:
 
 
 def _gather_peaks(
-    result: MatLike, threshold: float, min_dist: int, tw: int, th: int
+    result: MatLike,
+    threshold: float,
+    min_dist: int,
+    tw: int,
+    th: int,
 ) -> list[tuple]:
     work = result.copy()
     peaks = []
