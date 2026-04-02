@@ -50,6 +50,7 @@ PITCH_TO_INDEX = {letter: idx for idx, letter in enumerate(PITCH_CYCLE)}
 CIRCLE_OF_FIFTHS_SHARPS = ("F", "C", "G", "D", "A", "E", "B")
 CIRCLE_OF_FIFTHS_FLATS = ("B", "E", "A", "D", "G", "C", "F")
 
+# the bottom line of a treble staff is E4; for bass it is G2
 CLEF_BASE_POSITIONS = {
     "treble": ("E", 4),
     "bass": ("G", 2),
@@ -98,13 +99,16 @@ def _extract_notehead_mask(mask: MatLike, spacing: float) -> MatLike:
     )
     if diameter % 2 == 0:
         diameter += 1
+    # elliptical open removes anything smaller than a notehead (stems, beams, dots)
     kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (diameter, diameter))
     opened = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
+    # small close pass smooths the jagged edges the open leaves on notehead outlines
     cleanup_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, NOTEHEAD_CLEANUP_KERNEL)
     return cv.morphologyEx(opened, cv.MORPH_CLOSE, cleanup_kernel)
 
 
 def _create_secondary_mask(mask: MatLike) -> MatLike:
+    # Smooths without the size-filtering open, to refine center of tiny blobs
     cleanup_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, NOTEHEAD_CLEANUP_KERNEL)
     return cv.morphologyEx(mask, cv.MORPH_CLOSE, cleanup_kernel)
 
@@ -138,6 +142,7 @@ def _filter_notehead_candidates(
         cy = int(round(centroids[i][1]))
 
         if area <= tiny_area and valid_area:
+            # look for a nearby stem-sized component in the secondary mask and use its base for new centroid
             refined = _refine_tiny_center(
                 cx,
                 s_count,
@@ -149,7 +154,7 @@ def _filter_notehead_candidates(
             )
             if refined:
                 rx, ry = refined
-                # Reject tiny-center refinement that jumps too far vertically.
+                # discard the refinement if it moves the center too far vertically — that means it latched onto a different note
                 max_refine_shift_y = max(2, int(round(spacing * 0.5)))
                 if abs(ry - cy) <= max_refine_shift_y:
                     cx, cy = rx, ry
@@ -158,17 +163,17 @@ def _filter_notehead_candidates(
             centers.append((cx, cy))
 
         filtered_log.append(
-                {
-                    "id": i,
-                    "x": cx,
-                    "y": cy,
-                    "w": w,
-                    "h": h,
-                    "area": area,
-                    "aspect": aspect,
-                    "passed": valid_area and valid_size and valid_aspect,
-                }
-            )
+            {
+                "id": i,
+                "x": cx,
+                "y": cy,
+                "w": w,
+                "h": h,
+                "area": area,
+                "aspect": aspect,
+                "passed": valid_area and valid_size and valid_aspect,
+            }
+        )
 
     intermediates["filtered_components"] = filtered_log
 
@@ -176,6 +181,7 @@ def _filter_notehead_candidates(
 
 
 def _refine_tiny_center(cx, count, stats, centroids, spacing, max_x, max_y):
+    # find the nearest tall narrow component (a stem+head blob) horizontally aligned with the tiny center
     tolerance = max(2, int(round(spacing * 0.95)))
     min_height = max(6, int(round(spacing * 2.0)))
     min_area = spacing * spacing * 0.30
@@ -206,6 +212,7 @@ def _refine_tiny_center(cx, count, stats, centroids, spacing, max_x, max_y):
     h = int(stats[best_idx, cv.CC_STAT_HEIGHT])
 
     rx = x + w // 2
+    # place the refined y near the bottom of the blob (where the notehead sits), offset up by ~0.9 spacing
     ry = y + h - int(round(spacing * 0.90))
     return max(0, min(max_x, rx)), max(0, min(max_y, ry))
 
@@ -241,6 +248,7 @@ def _add_stem_centers(
     merge_dist: int,
     intermediates: dict | None,
 ) -> list[list]:
+    # only run in sparse measures (0-2 notes found); in busier measures the morph already caught everything
     if len(centers) > 2:
         return centers
 
@@ -269,16 +277,17 @@ def _add_stem_centers(
             continue
 
         cx = x + w // 2
+        # place the candidate y near the bottom of the stem blob where the notehead would be
         cy = y + h - max(1, int(round(spacing * 0.55)))
 
+        # reject candidates that are far above or below the other notes — likely a stray blob on another staff
         existing_ys = [ey for _, ey, _ in result]
         if existing_ys:
             mean_y = int(round(sum(existing_ys) / float(len(existing_ys))))
             if abs(cy - mean_y) > max_band_y_delta:
                 continue
 
-        # Don't add centers that share the same x
-        # as an existing center; this pattern caused vertical ghost duplicates.
+        # sharing an x with an existing center produced vertical ghost duplicates in testing
         if any(abs(cx - ex) <= overlap_x for ex, _, _ in result):
             continue
 
@@ -309,6 +318,7 @@ def _resolve_notes(
     measure: Measure,
     measure_index: int,
 ) -> list[Note]:
+    # step 0 is the bottom line; each half-step is half a spacing upward
     bottom_line_y = int(round(staff.lines[4].y - measure.y_top))
     half_step_px = staff.spacing / 2.0
 
@@ -318,8 +328,8 @@ def _resolve_notes(
 
         cy_pitch = cy
         if duration in ("half", "whole"):
-            # Hollow note centroids can skew upward, but applying the offset to
-            # already-low notes tends to push them one step too low.
+            # hollow note centroids skew upward because the morph rounds off the top of the open head;
+            # only apply the correction when the note is above the bottom line — low notes don't have this problem
             if cy <= bottom_line_y:
                 cy_pitch = cy + int(round(staff.spacing * HOLLOW_NOTE_Y_OFFSET_FRAC))
 
@@ -373,6 +383,7 @@ def _merge_duplicate_detections(
     for note in notes[1:]:
         prev = result[-1]
 
+        # two unclassified blobs at the same position are the same notehead detected twice
         is_unclassified_pair = (
             prev.duration_class is None
             and note.duration_class is None
@@ -381,6 +392,8 @@ def _merge_duplicate_detections(
             and abs(note.step - prev.step) <= DUPLICATE_MAX_STEP_DIFF
         )
 
+        # a hollow notehead can split into two blobs (left and right arcs); confirm by checking
+        # that the midpoint between them has very little ink
         is_hollow_split = (
             prev.duration_class in ("quarter", "whole")
             and note.duration_class in ("quarter", "whole")
@@ -488,6 +501,7 @@ def _detect_stem(mask: MatLike, cx: int, cy: int, spacing: float) -> bool:
 
     min_run = max(3, int(round(spacing * STEM_MIN_RUN_FRAC)))
 
+    # scan each column for a long unbroken vertical run of ink — that's a stem
     for col in range(roi.shape[1]):
         run_len = max_run = 0
         for row in range(roi.shape[0]):
@@ -536,6 +550,7 @@ def resolve_pitches(notes: list[Note], clef: Clef | None) -> None:
 
 def _step_to_pitch(base_letter: str, base_octave: int, step: int) -> tuple[str, int]:
     base_idx = PITCH_TO_INDEX[base_letter]
+    # treat pitch as a single integer on a 7-note scale, then split back into letter + octave
     absolute = base_octave * 7 + base_idx + step
     return PITCH_CYCLE[absolute % 7], absolute // 7
 
