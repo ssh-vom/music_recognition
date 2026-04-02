@@ -1,5 +1,3 @@
-"""Complete sheet music processing pipeline."""
-
 import re
 from statistics import median
 

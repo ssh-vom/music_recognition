@@ -1,13 +1,14 @@
-"""Rhythm detection - beam-aware duration refinement for already-detected notes."""
-
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike
 
 from schema import Note, Staff
 
+
 def refine_beamed_durations(
-    mask: MatLike, notes: list[Note], staff: Staff
+    mask: MatLike,
+    notes: list[Note],
+    staff: Staff,
 ) -> list[Note]:
     """Update duration_class for notes connected by beams (never adds new notes)."""
     if len(notes) < 2:
@@ -38,31 +39,36 @@ def refine_beamed_durations(
 
 
 def _detect_beam_count(
-    mask: MatLike, note_group: list[tuple[int, Note]], staff: Staff
+    mask: MatLike,
+    note_group: list[tuple[int, Note]],
+    staff: Staff,
 ) -> int:
     notes = [n for _, n in note_group]
     spacing = staff.spacing
 
-    stem_dirs = [_estimate_stem_direction(mask, n, spacing) for n in notes]
-    up_count = sum(1 for d in stem_dirs if d == "up")
-    down_count = sum(1 for d in stem_dirs if d == "down")
+    stem_dirs = [
+        _estimate_stem_direction(mask, n, spacing) for n in notes
+    ]  # get the stem directions
+    up_count = sum(1 for d in stem_dirs if d == "up")  # count up direction stems
+    down_count = sum(1 for d in stem_dirs if d == "down")  # count down direction stems
 
-    if not (up_count or down_count):
+    if not (up_count or down_count):  # if there are no beams then return
         return 0
 
-    beam_direction = "up" if up_count > down_count else "down"
+    beam_direction = (
+        "up" if up_count > down_count else "down"
+    )  # check dominant direction
 
     min_x = min(n.center_x for n in notes)
     max_x = max(n.center_x for n in notes)
-    if max_x - min_x < spacing * 0.5:
+    if max_x - min_x < spacing * 0.5:  # if we don't see enough beams return
         return 0
 
-    # Check for the stem tips and prune any invalids
     tips = [
         y
         for note in notes
         if (y := _find_stem_endpoint(mask, note, spacing, beam_direction)) is not None
-    ]
+    ]  # find the stem tips
     if not tips:
         return 0
 
@@ -97,7 +103,11 @@ def _detect_beam_count(
     return min(beam_count, 2)
 
 
-def _estimate_stem_direction(mask: MatLike, note: Note, spacing: float) -> str:
+def _estimate_stem_direction(
+    mask: MatLike,
+    note: Note,
+    spacing: float,
+) -> str:
     cx, cy = note.center_x, note.center_y
     h, w = mask.shape
     x_radius = int(spacing * 0.6)

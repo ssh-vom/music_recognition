@@ -1,5 +1,3 @@
-"""Text logs and ABC-oriented string fields derived from a Score."""
-
 from constants import DEFAULT_KEY, DEFAULT_METER
 from schema import Score
 

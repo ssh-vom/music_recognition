@@ -232,7 +232,9 @@ def save_notes_visualization(
 
     if raw_notes_mask is not None:
         paths["01_notes_mask"] = artifacts.write_image(
-            artifacts.sections.masks, "01_notes_mask.jpg", cv.bitwise_not(raw_notes_mask)
+            artifacts.sections.masks,
+            "01_notes_mask.jpg",
+            cv.bitwise_not(raw_notes_mask),
         )
 
     morph_dir = artifacts.ensure_subdir(artifacts.sections.notes, "02_morphological")

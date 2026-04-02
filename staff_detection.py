@@ -1,5 +1,3 @@
-"""Staff detection - locate the 5-line staves in sheet music."""
-
 import cv2 as cv
 import numpy as np
 from cv2.typing import MatLike

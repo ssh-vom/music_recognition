@@ -1,5 +1,3 @@
-"""Shared lightweight helpers and constants."""
-
 from pathlib import Path
 
 import cv2 as cv
