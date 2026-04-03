@@ -1,4 +1,5 @@
 // Report Template - 8.5 x 11 inch format
+#import "custom-counters.typ": eq-numbered, table-numbered
 #import "@preview/codly:1.3.0": *
 #import "@preview/codly-languages:0.1.1": *
 #show: codly-init.with()
@@ -383,7 +384,7 @@
   PNG format into playable music in ABC format. The central challenge faced in OMR is that many symbols
   share visual geometry. Filled Noteheads resemble staff line fragments, beams resemble note stems, and the note stems themselves intersect 
   with practically every other structure on a score. Our approach utilizes the distinct morphological properties of each type of symbol; 
-  staff lines are the widest horiontal structures, bar lines are the tallest vertical structures and noteheads share an elliptical shape that 
+  staff lines are the widest horizontal structures, bar lines are the tallest vertical structures and noteheads share an elliptical shape that 
   is proportional to the spacing between staff lines. With these properties in mind, we utilize morphological kernels and connected component analysis 
   to distinguish between each symbol independently.\ This pipeline was evaluated on five melodies from `abcnotation.com`, of varying complexity. _Twinkle Twinkle Little Star_ was reproduced 
   exactly. _Mary Had a Little Lamb_ correctly worked with a one-flat key signature, and Frere Jacques correctly tracked stepwise 
@@ -409,7 +410,7 @@ The pipeline consists of 8 key steps:
 === Staff Line Detection:
 We start by converting the input image to grayscale and binarizing using otsu's (@fig:twinkle-otsu).
 We then perform opening with a horizontal morphological kernel of size ($W times 1$) shown in (@fig:staffline-kernel) and parameterized by (@eq:kernel-dimensions).
-Staff lines are horizontal and wide enough to pass through this kernel, the other features are suppresssed (@fig:twinkle-staff-lines-only)
+Staff lines are horizontal and wide enough to pass through this kernel, the other features are suppressed (@fig:twinkle-staff-lines-only)
 These lines share a common spacing size $S$ (@fig:twinkle-staff-overlay), which we use for further note/rhythm detection.
 
 
@@ -423,7 +424,7 @@ Clef detection was done using template matching in `clef_detection.py`. A small 
 
 #pagebreak()
 === Key Signature and Time Signature Detection
-Key signature detection looks at the region between the clef and the first bar lnie. In `accidental_detection.py`, connected components are extracted and classified as sharps or flats based on their shape, using a similar method of template matching. We count the number and determine the pitch based on a mapping of sharp counts or flat counts. We ensure any duplicate detections are removed before determining the signature.
+Key signature detection looks at the region between the clef and the first bar line. In `accidental_detection.py`, connected components are extracted and classified as sharps or flats based on their shape, using a similar method of template matching. We count the number and determine the pitch based on a mapping of sharp counts or flat counts. We ensure any duplicate detections are removed before determining the signature.
 When classifying durations, we use the ratio $r$ of filled pixels in the round regions of ink, as well as whether it has a stem or beam attached. The time signature is read using Tesseract OCR. The region is split into top and bottom halves for the numerator and denominator of the signature,
 scaled up and then passed to OCR.
 
@@ -432,7 +433,7 @@ Bar line positions are used in `measure_splitting.py` to divide each staff into 
 
 
 === Note Detection, Rhythm and Pitch Mapping
-Notes are detected in `note_detection.py` using blob detection on the notes mask. An elliptical morphological opening with the kernel shown in (@fig:twinkle-notehead-kernel) isolates candidate notehead blobs; a sample intermediate result is shown in (@fig:twinkle-morph-open). Blobs are then filtered based on size and shape using thresholds based on staff spacing, as shown in (@fig:twinkle-geometric-filter). Each detected note head is mapping to a pitch by comparing it's vertical position to the staff lines, 
+Notes are detected in `note_detection.py` using blob detection on the notes mask. An elliptical morphological opening with the kernel shown in (@fig:twinkle-notehead-kernel) isolates candidate notehead blobs; a sample intermediate result is shown in (@fig:twinkle-morph-open). Blobs are then filtered based on size and shape using thresholds based on staff spacing, as shown in (@fig:twinkle-geometric-filter). Each detected note head is mapped to a pitch by comparing its vertical position to the staff lines, 
 this position gets converted into a step value, and the key signature is applied to adjust for accidentals. Rhythm is estimated within `rhythm_detection.py` by looking for beams connected to note stems, we then use the heuristic as follows. 
 (@table:duration-classification)
 
@@ -451,13 +452,13 @@ The analysis below will focus on the five songs that were tested with the image 
 All notes across three staffs were detected with high to medium confidence, and arrived at the correct ABC output. We can see this detailed in Figures @fig:twinkle-comparison and @fig:ttls_abc_js. The clef was determined correctly, and correct durations were found for each note. We were able to cleanly extract the correct 4/4 time signature, and each measure contained the proper amount of expected notes when split.
 
 === Mary Had a Little Lamb (Key F, 4/4)
-Mary Had a Little Lamb correctly preserved the melody and also correctly identified the one-flat key signature. The side-by-side comparison in @fig:mary-comparison shows a clean final overlay with the expected note structure, while the ABC rendering is shown in Figure @fig:mary_had_a_little_lamb_output_abc_js.
+Mary Had a Little Lamb correctly preserved the melody and also correctly identified the single flat key signature. The side-by-side comparison in @fig:mary-comparison shows a clean final overlay with the expected note structure, while the ABC rendering is shown in Figure @fig:mary_had_a_little_lamb_output_abc_js.
 
 === Frere Jacques (Key C, 4/4)
-Frere Jacques preserved the expected stepwise melodic motion. As shown in @fig:frere-comparison, the repeated C-D-E-C phrase is tracked cleanly, although some beamed passages introduce small note-count errors. The final ABC rendering is shown in @fig:frere_jacques_abc_js.
+Frere Jacques preserved the correct melody and motion. As shown in @fig:frere-comparison, the repeated C-D-E-C phrase was tracked cleanly, although some beamed passages introduced small note-count errors. The final ABC rendering is shown in @fig:frere_jacques_abc_js.
 
 === Sailors' Hornpipe (Key G, 4/4)
-Sailors' Hornpipe was more complex, but still preserved the overall pitch contour. @fig:sailors-comparison shows that most simpler measures are handled well, while denser passages begin to reveal beam-related false positives. The final ABC rendering is shown in @fig:sailors_abc_js.
+Sailors' Hornpipe was more complex, but still preserved the overall pitch shape. @fig:sailors-comparison shows that most simpler measures are handled well, while denser passages begin to reveal beam-related false positives. The final ABC rendering is shown in @fig:sailors_abc_js.
 
 === Boys of 45 Reel (Key D, 4/4)
 The Boys of 45 Reel illustrates the main failure mode of the system. In @fig:reel-comparison, beam fragments are misclassified as high-pitch noteheads, leading to repeated false positives in dense eighth-note passages. The degraded final ABC rendering is shown in @fig:boys_of_the_reel_abc_js.
@@ -481,7 +482,7 @@ morphology and connected-component analysis. This is reflected most clearly by t
 @fig:mary-comparison, and @fig:frere-comparison, which show that the pipeline is robust on simpler monophonic songs with sparse note
 placement. It begins to fall apart when confronted with crowded music such as _The Boys of 45 Reel_, as shown in @fig:reel-comparison. When
 comparing this to the project's overall objectives, we would still call this a success, since without the use of a complex
-neural-network-based design, and relying only on kernel-based morphology and connected components, the system was able to consistently
+Neural Network  design, and relying only on kernel-based morphology and connected components, the system was able to consistently
 produce correct results on simple songs. In the future, a larger dataset of templated symbols could help improve detection in crowded sheets
 rather than relying primarily on region growing with thresholding.
 
@@ -594,39 +595,38 @@ rather than relying primarily on region growing with thresholding.
 
 == Principal Equations
 
-#figure(
+#eq-numbered(
   $
   W_"staff" = max(25, [W_"img"/12]), 
   D_"note" = [0.45 times S], 
   H_"bar" = [2.0times S]
   $,
-  supplement: [Equation],
-  caption: [Scale-Relative Kernel Dimensions]
-) <eq:kernel-dimensions>
+  caption: [Scale-Relative Kernel Dimensions],
+  label-name: <eq:kernel-dimensions>
+)
 
 Where $W$ is width, $D$ is diameter and $H$ is height
 
-#figure(
+#eq-numbered(
 $
 "step" = round[(y_"bottom" - y_"note") \/ (S /3)]
 $,
   caption: [Pitch step formula],
-  supplement: [Equation],
 )\
 Where $y_"bottom"$ is the y-coordinate of the lowest staff line, $y_"note"$ is the detected centroid of the notehead. The `round` function uses a threshold of `0.58`, this bias compensated for the fill on a note being concentrated at the bottom (notehead position). 
 
-#figure(
+#eq-numbered(
   $ "confidence" = cases(
     "high"   & quad lr(|"step" - "floor"("step")|) <= 0.20,
     "medium" & quad lr(|"step" - "floor"("step")|) <= 0.40,
     "low"    & quad "otherwise"
   ) $,
   caption: [Pitch Step Confidence],
-  supplement: [Equation],
-) <eq:confidence>
+  label-name: <eq:confidence>
+)
 #v(0.5em)
 #align(center)[
-  #figure(
+  #table-numbered(
   table(
     columns: (1.6fr, 1.2fr, 1.2fr, 1.2fr),
     align: center,
@@ -638,9 +638,9 @@ Where $y_"bottom"$ is the y-coordinate of the lowest staff line, $y_"note"$ is t
     [$r >= 0.55$],   [Yes], [No],  [Quarter],
     [$r >= 0.55$],   [Yes], [Yes], [Eighth / Sixteenth],
   ),
-    supplement: [Table],
-    caption: [Duration Classification]
-  ) <table:duration-classification> 
+  caption: [Duration Classification],
+  label-name: <table:duration-classification>
+) 
 ]
 
 
@@ -648,10 +648,10 @@ Where $y_"bottom"$ is the y-coordinate of the lowest staff line, $y_"note"$ is t
 
 The code for this project is fully available on GitHub: #link("https://github.com/ssh-vom/music_recognition")["https://github.com/ssh-vom/music_recognition"], 
 the code shown in the _Program Listings_ section is a simplified version removing most of the visualizations, and giving the key algorithms.
-The libraries used within the code was as follows:
+The libraries used within the code were as follows:
 - OpenCV: for morphology, connected component analysis, template matching and loading/saving of images.
-- pytessertact / Tesseract OCR: Digit recognition for time signature extraction
-- ABC notation standard: we referenced #link("https://wwww.abcnotation.com")["https://www.abcnotation.com"]
+- pytesseract / Tesseract OCR: Digit recognition for time signature extraction
+- ABC notation standard: we referenced #link("https://www.abcnotation.com")["https://www.abcnotation.com"]
 - NumPy: For array operations 
 - Matplotlib: visualization of intermediate detections 
 
